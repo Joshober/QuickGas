@@ -51,22 +51,36 @@ A Flutter mobile application for on-demand boat fuel delivery service. Customers
    flutter pub get
    ```
 
-3. **Configure Firebase**
-   - Download your Firebase configuration files from Firebase Console
-   - Android: Copy `google-services.json` to `android/app/` (see `google-services.json.example` for reference)
-   - iOS: Copy `GoogleService-Info.plist` to `ios/Runner/` (see `GoogleService-Info.plist.example` for reference)
-   - **IMPORTANT**: These files contain API keys and are gitignored - never commit them to version control
-   - Ensure Firebase is properly initialized
-
-4. **Set up environment variables**
-   - Create `.env` file in the `quickgas` directory
-   - Add your API keys:
+3. **Set up environment variables**
+   - Create `.env` file in the `quickgas` directory (copy from `.env.example`)
+   - Add all your API keys and Firebase configuration:
      ```env
      OPENROUTESERVICE_API_KEY=your_key_here
      GOOGLE_MAPS_API_KEY=your_key_here
      STRIPE_PUBLISHABLE_KEY=your_key_here
      BACKEND_URL=your_backend_url_here
+     
+     FIREBASE_PROJECT_ID=your_project_id
+     FIREBASE_PROJECT_NUMBER=your_project_number
+     
+     FIREBASE_ANDROID_API_KEY=your_android_api_key
+     FIREBASE_ANDROID_PACKAGE_NAME=com.example.chatappfinal
+     FIREBASE_ANDROID_APP_ID=your_android_app_id
+     
+     FIREBASE_IOS_API_KEY=your_ios_api_key
+     FIREBASE_IOS_BUNDLE_ID=your_bundle_id
+     FIREBASE_IOS_APP_ID=your_ios_app_id
+     FIREBASE_STORAGE_BUCKET=your_storage_bucket
+     FIREBASE_DATABASE_URL=your_database_url
      ```
+   - Get these values from your Firebase Console project settings
+
+4. **Generate Firebase configuration files from environment variables**
+   - Windows: Run `make_config.bat`
+   - Linux/Mac: Run `chmod +x make_config.sh && ./make_config.sh`
+   - Or manually: `dart run scripts/generate_firebase_configs.dart`
+   - This will generate `android/app/google-services.json` and `ios/Runner/GoogleService-Info.plist` from your `.env` file
+   - **IMPORTANT**: These generated files are gitignored - never commit them to version control
 
 5. **Configure Google Maps**
    - Android: Add API key to `android/app/src/main/AndroidManifest.xml`
@@ -111,7 +125,17 @@ quickgas/
 1. Create project in Google Cloud Console
 2. Enable Maps SDK for Android/iOS
 3. Create API key
-4. Add to `.env` and platform-specific configs
+4. Add to `.env` as `GOOGLE_MAPS_API_KEY`
+5. Update platform-specific configs (AndroidManifest.xml for Android, Info.plist for iOS)
+
+### Firebase Configuration
+1. Create a Firebase project at https://console.firebase.google.com
+2. Add Android and iOS apps to your project
+3. Download the config files or get the values from Firebase Console
+4. Add all Firebase configuration values to your `.env` file (see `.env.example`)
+5. Run the config generator script to create Firebase config files:
+   - Windows: `make_config.bat`
+   - Linux/Mac: `./make_config.sh`
 
 ### Stripe Keys
 1. Create Stripe account
