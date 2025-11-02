@@ -1,0 +1,41 @@
+class AppConstants {
+  static const String appName = 'QuickGas';
+  static const String appVersion = '1.0.0';
+
+  static const String usersCollection = 'users';
+  static const String ordersCollection = 'orders';
+  static const String routesCollection = 'routes';
+  static const String deliveryVerificationsCollection =
+      'delivery_verifications';
+
+  static const String orderStatusPending = 'pending';
+  static const String orderStatusAccepted = 'accepted';
+  static const String orderStatusInTransit = 'in_transit';
+  static const String orderStatusCompleted = 'completed';
+  static const String orderStatusCancelled = 'cancelled';
+
+  static const String roleCustomer = 'customer';
+  static const String roleDriver = 'driver';
+  static const String roleBoth = 'both';
+
+  static const String paymentMethodStripe = 'stripe';
+  static const String paymentMethodCash = 'cash';
+
+  static const String paymentStatusPending = 'pending';
+  static const String paymentStatusPaid = 'paid';
+  static const String paymentStatusFailed = 'failed';
+
+  static const String routeStatusPlanning = 'planning';
+  static const String routeStatusActive = 'active';
+  static const String routeStatusCompleted = 'completed';
+
+  static const String openRouteServiceBaseUrl =
+      'https://api.openrouteservice.org/v2';
+
+  static const Duration animationDurationFast = Duration(milliseconds: 200);
+  static const Duration animationDurationNormal = Duration(milliseconds: 300);
+  static const Duration animationDurationSlow = Duration(milliseconds: 500);
+
+  static const int maxImageSize = 5 * 1024 * 1024;
+  static const double imageCompressionQuality = 0.8;
+}
