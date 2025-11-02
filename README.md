@@ -52,8 +52,10 @@ A Flutter mobile application for on-demand boat fuel delivery service. Customers
    ```
 
 3. **Configure Firebase**
-   - Android: Place `google-services.json` in `android/app/`
-   - iOS: Place `GoogleService-Info.plist` in `ios/Runner/`
+   - Download your Firebase configuration files from Firebase Console
+   - Android: Copy `google-services.json` to `android/app/` (see `google-services.json.example` for reference)
+   - iOS: Copy `GoogleService-Info.plist` to `ios/Runner/` (see `GoogleService-Info.plist.example` for reference)
+   - **IMPORTANT**: These files contain API keys and are gitignored - never commit them to version control
    - Ensure Firebase is properly initialized
 
 4. **Set up environment variables**
@@ -155,7 +157,14 @@ flutter build ios --release
 
 ## Important Notes
 
-- `.env` file is gitignored - never commit API keys
+### Security
+- **Never commit API keys or Firebase configuration files to version control**
+- `.env` file is gitignored - store all API keys here
+- Firebase config files (`google-services.json` and `GoogleService-Info.plist`) are gitignored
+- Use the `.example` template files as reference, but always add your actual config files locally
+- If you accidentally commit API keys, rotate them immediately in Google Cloud Console
+
+### Configuration
 - Firebase configuration files must match your project package name
 - For production, use secure storage for sensitive keys
 - Payment confirmation requires backend integration

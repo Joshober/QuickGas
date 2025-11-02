@@ -48,3 +48,7 @@ app.*.map.json
 .env
 .env.local
 .env.*.local
+
+# Firebase configuration files (contain sensitive API keys)
+ios/Runner/GoogleService-Info.plist
+android/app/google-services.json

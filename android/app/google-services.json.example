@@ -1,16 +1,16 @@
 {
   "project_info": {
-    "project_number": "61783248551",
-    "firebase_url": "https://fir-example-50daf-default-rtdb.firebaseio.com",
-    "project_id": "fir-example-50daf",
-    "storage_bucket": "fir-example-50daf.firebasestorage.app"
+    "project_number": "YOUR_PROJECT_NUMBER",
+    "firebase_url": "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+    "project_id": "YOUR_PROJECT_ID",
+    "storage_bucket": "YOUR_PROJECT_ID.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:61783248551:android:20b7cdca7663effb905582",
+        "mobilesdk_app_id": "YOUR_MOBILESDK_APP_ID",
         "android_client_info": {
-          "package_name": "com.example.chatappfinal"
+          "package_name": "YOUR_PACKAGE_NAME"
         }
       },
       "oauth_client": [],
