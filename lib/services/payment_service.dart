@@ -12,19 +12,22 @@ class PaymentService {
     _backendUrl = url;
   }
 
-  Future<String> createPaymentIntent({
+  bool get isBackendAvailable => _backendUrl != null;
+
+  Future<String?> createPaymentIntent({
     required double amount,
     required String currency,
     Map<String, dynamic>? metadata,
   }) async {
     if (_backendUrl == null) {
-      throw Exception(
-        'Backend URL not configured. Call setBackendUrl() first.',
-      );
+      return null; // Backend not available, return null instead of throwing
     }
 
     try {
       final dio = Dio();
+      dio.options.connectTimeout = const Duration(seconds: 5);
+      dio.options.receiveTimeout = const Duration(seconds: 5);
+      
       final response = await dio.post(
         '$_backendUrl/api/payments/create-intent',
         data: {
@@ -36,7 +39,8 @@ class PaymentService {
 
       return response.data['clientSecret'] as String;
     } catch (e) {
-      throw Exception('Failed to create payment intent: $e');
+      // Backend unavailable, return null
+      return null;
     }
   }
 
@@ -87,21 +91,23 @@ class PaymentService {
     return false;
   }
 
-  Future<void> cancelPaymentIntent(String paymentIntentId) async {
+  Future<bool> cancelPaymentIntent(String paymentIntentId) async {
     if (_backendUrl == null) {
-      throw Exception(
-        'Backend URL not configured. Call setBackendUrl() first.',
-      );
+      return false; // Backend not available
     }
 
     try {
       final dio = Dio();
+      dio.options.connectTimeout = const Duration(seconds: 5);
+      dio.options.receiveTimeout = const Duration(seconds: 5);
+      
       await dio.post(
         '$_backendUrl/api/payments/cancel',
         data: {'paymentIntentId': paymentIntentId},
       );
+      return true;
     } catch (e) {
-      throw Exception('Failed to cancel payment: $e');
+      return false; // Backend unavailable
     }
   }
 }

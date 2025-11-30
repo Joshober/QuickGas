@@ -19,6 +19,8 @@ final backendServiceProvider = Provider<BackendService?>((ref) {
   if (backendUrl.isNotEmpty && backendUrl != 'YOUR_BACKEND_URL_HERE') {
     final service = BackendService();
     service.setBaseUrl(backendUrl);
+    // Note: Availability check happens asynchronously when service is first used
+    // The service will check availability on first API call
     return service;
   }
   return null;

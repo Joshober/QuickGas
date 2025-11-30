@@ -63,14 +63,31 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final paymentService = PaymentService();
       final backendService = ref.read(backendServiceProvider);
       
-      if (backendService == null) {
-        throw Exception('Backend service not configured. Please check your backend URL settings.');
+      // Check if backend is available
+      if (backendService == null || !backendService.isAvailable) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment processing requires backend connection. Please try again later or use cash payment.'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
       }
 
       // Get backend URL from ApiKeys
       final backendUrl = ApiKeys.backendUrl;
       if (backendUrl.isEmpty || backendUrl == 'YOUR_BACKEND_URL_HERE') {
-        throw Exception('Backend URL not configured. Please set BACKEND_URL in your .env file.');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Backend URL not configured. Payment processing unavailable.'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
       }
       paymentService.setBackendUrl(backendUrl);
 
@@ -82,6 +99,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           'orderId': widget.orderId,
         },
       );
+
+      // Check if payment intent creation failed (backend unavailable)
+      if (clientSecret == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to connect to payment service. Please try again later or use cash payment.'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
 
       // Check if card form is valid
       if (_cardFormController == null) {

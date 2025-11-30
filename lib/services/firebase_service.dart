@@ -188,8 +188,8 @@ class FirebaseService {
         }
       }
 
-      if (driverTokens.isNotEmpty) {
-        await backendService.sendBatchNotifications(
+      if (driverTokens.isNotEmpty && backendService.isAvailable) {
+        final success = await backendService.sendBatchNotifications(
           fcmTokens: driverTokens,
           title: 'New Order Available',
           body: '${gasQuantity.toStringAsFixed(0)} gallons at $address',
@@ -200,6 +200,9 @@ class FirebaseService {
             'gasQuantity': gasQuantity.toString(),
           },
         );
+        if (!success) {
+          print('Backend batch notification failed, using Firebase-only mode');
+        }
       }
     } catch (e) {
       print('Error notifying drivers: $e');
@@ -340,8 +343,8 @@ class FirebaseService {
 
         if (userDoc.exists) {
           final fcmToken = userDoc.data()?['fcmToken'] as String?;
-          if (fcmToken != null && fcmToken.isNotEmpty) {
-            await backendService.sendNotification(
+          if (fcmToken != null && fcmToken.isNotEmpty && backendService.isAvailable) {
+            final success = await backendService.sendNotification(
               fcmToken: fcmToken,
               title: title,
               body: body,
@@ -351,6 +354,10 @@ class FirebaseService {
                 'status': status,
               },
             );
+            // If backend notification fails, we can still use Firebase Cloud Messaging directly
+            if (!success) {
+              print('Backend notification failed, app will use Firebase-only mode');
+            }
           }
         }
       }
@@ -478,14 +485,18 @@ class FirebaseService {
     // Send notification to customer if FCM token and backend service available
     if (customerFcmToken != null &&
         customerFcmToken.isNotEmpty &&
-        backendService != null) {
+        backendService != null &&
+        backendService.isAvailable) {
       try {
-        await backendService.sendNotification(
+        final success = await backendService.sendNotification(
           fcmToken: customerFcmToken,
           title: 'Order Update',
           body: 'Your order status: ${status.toUpperCase()}',
           data: {'orderId': orderId, 'status': status},
         );
+        if (!success) {
+          print('Backend notification failed, using Firebase-only mode');
+        }
       } catch (e) {
         // Notification failure shouldn't block status update
         print('Failed to send notification: $e');

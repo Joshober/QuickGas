@@ -4,21 +4,48 @@ import 'package:dio/dio.dart';
 class BackendService {
   final Dio _dio = Dio();
   String? _baseUrl;
+  bool _isAvailable = false;
 
   void setBaseUrl(String url) {
     _baseUrl = url;
     _dio.options.baseUrl = url;
     _dio.options.headers['Content-Type'] = 'application/json';
+    _dio.options.connectTimeout = const Duration(seconds: 5);
+    _dio.options.receiveTimeout = const Duration(seconds: 5);
   }
 
-  Future<void> sendNotification({
+  /// Check if backend is available by hitting health endpoint
+  Future<bool> checkAvailability() async {
+    if (_baseUrl == null) {
+      _isAvailable = false;
+      return false;
+    }
+
+    try {
+      final response = await _dio.get(
+        '/health',
+        options: Options(
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      _isAvailable = response.statusCode == 200;
+      return _isAvailable;
+    } catch (e) {
+      _isAvailable = false;
+      return false;
+    }
+  }
+
+  bool get isAvailable => _isAvailable;
+
+  Future<bool> sendNotification({
     required String fcmToken,
     required String title,
     required String body,
     Map<String, dynamic>? data,
   }) async {
-    if (_baseUrl == null) {
-      throw Exception('Backend URL not configured');
+    if (_baseUrl == null || !_isAvailable) {
+      return false;
     }
 
     try {
@@ -31,19 +58,21 @@ class BackendService {
           'data': data ?? {},
         },
       );
+      return true;
     } catch (e) {
-      throw Exception('Failed to send notification: $e');
+      _isAvailable = false; // Mark as unavailable on error
+      return false;
     }
   }
 
-  Future<void> sendBatchNotifications({
+  Future<bool> sendBatchNotifications({
     required List<String> fcmTokens,
     required String title,
     required String body,
     Map<String, dynamic>? data,
   }) async {
-    if (_baseUrl == null) {
-      throw Exception('Backend URL not configured');
+    if (_baseUrl == null || !_isAvailable) {
+      return false;
     }
 
     try {
@@ -56,17 +85,19 @@ class BackendService {
           'data': data ?? {},
         },
       );
+      return true;
     } catch (e) {
-      throw Exception('Failed to send batch notifications: $e');
+      _isAvailable = false;
+      return false;
     }
   }
 
-  Future<Map<String, dynamic>> optimizeRoute({
+  Future<Map<String, dynamic>?> optimizeRoute({
     required List<List<double>> locations,
     String? apiKey,
   }) async {
-    if (_baseUrl == null) {
-      throw Exception('Backend URL not configured');
+    if (_baseUrl == null || !_isAvailable) {
+      return null;
     }
 
     try {
@@ -80,17 +111,18 @@ class BackendService {
         'durations': response.data['durations'],
       };
     } catch (e) {
-      throw Exception('Failed to optimize route: $e');
+      _isAvailable = false;
+      return null;
     }
   }
 
-  Future<String> uploadImage({
+  Future<String?> uploadImage({
     required String orderId,
     required String imageType,
     required String filePath,
   }) async {
-    if (_baseUrl == null) {
-      throw Exception('Backend URL not configured');
+    if (_baseUrl == null || !_isAvailable) {
+      return null;
     }
 
     try {
@@ -110,13 +142,14 @@ class BackendService {
 
       return response.data['url'] as String;
     } catch (e) {
-      throw Exception('Failed to upload image: $e');
+      _isAvailable = false;
+      return null;
     }
   }
 
-  Future<Uint8List> getImage(String imageId) async {
-    if (_baseUrl == null) {
-      throw Exception('Backend URL not configured');
+  Future<Uint8List?> getImage(String imageId) async {
+    if (_baseUrl == null || !_isAvailable) {
+      return null;
     }
 
     try {
@@ -127,7 +160,8 @@ class BackendService {
 
       return response.data as Uint8List;
     } catch (e) {
-      throw Exception('Failed to get image: $e');
+      _isAvailable = false;
+      return null;
     }
   }
 }

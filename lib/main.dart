@@ -67,16 +67,35 @@ void main() async {
   await notificationService.initialize();
   await notificationService.createNotificationChannels();
 
+  // Try to connect to backend, but don't fail if unavailable
   String? backendUrl = ApiKeys.backendUrl.isNotEmpty
       ? ApiKeys.backendUrl
       : BackendConstants.getBackendUrl();
 
+  bool backendAvailable = false;
   if (backendUrl.isNotEmpty && backendUrl != 'YOUR_BACKEND_URL_HERE') {
-    final paymentService = PaymentService();
-    paymentService.setBackendUrl(backendUrl);
-
-    final backendService = BackendService();
-    backendService.setBaseUrl(backendUrl);
+    try {
+      final backendService = BackendService();
+      backendService.setBaseUrl(backendUrl);
+      
+      // Check if backend is available
+      backendAvailable = await backendService.checkAvailability();
+      
+      if (backendAvailable) {
+        debugPrint('✓ Backend connected: $backendUrl');
+        
+        // Configure payment service with backend
+        final paymentService = PaymentService();
+        paymentService.setBackendUrl(backendUrl);
+      } else {
+        debugPrint('⚠ Backend unavailable, using Firebase-only mode');
+      }
+    } catch (e) {
+      debugPrint('⚠ Backend connection failed: $e - Using Firebase-only mode');
+      backendAvailable = false;
+    }
+  } else {
+    debugPrint('ℹ No backend URL configured - Using Firebase-only mode');
   }
 
   // TrafficService now uses only Google Maps API - no OpenRouteService needed
@@ -85,6 +104,10 @@ void main() async {
   if (stripePublishableKey.isNotEmpty) {
     final paymentService = PaymentService();
     paymentService.setPublishableKey(stripePublishableKey);
+  }
+  
+  if (!backendAvailable) {
+    debugPrint('ℹ App running in Firebase-only mode. Backend features disabled.');
   }
 
   runApp(const ProviderScope(child: MyApp()));

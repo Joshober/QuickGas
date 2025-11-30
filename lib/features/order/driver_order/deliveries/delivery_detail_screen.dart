@@ -70,13 +70,17 @@ class _DeliveryDetailScreenState extends ConsumerState<DeliveryDetailScreen> {
       String photoBase64 = '';
 
       // Try to upload to backend first if available
-      if (backendService != null) {
+      if (backendService != null && backendService.isAvailable) {
         try {
           photoUrl = await backendService.uploadImage(
             orderId: widget.order.id,
             imageType: 'delivery_photo',
             filePath: _selectedImage!.path,
           );
+          // If backend upload returns null, it means backend is unavailable
+          if (photoUrl == null) {
+            print('Backend upload unavailable, using base64');
+          }
         } catch (e) {
           // If backend upload fails, fall back to base64
           print('Backend upload failed, using base64: $e');
