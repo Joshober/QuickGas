@@ -58,6 +58,7 @@
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
+            <version>10.7.1</version>
         </dependency>
         
         <!-- Stripe Java SDK -->
