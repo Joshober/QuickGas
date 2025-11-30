@@ -25,7 +25,7 @@ RUN chmod +x scripts/create-env.sh 2>/dev/null || true && \
     echo "Environment variables configured for build"
 
 # Build Flutter web app with proper base href for root deployment
-RUN flutter build web --release --web-renderer html --base-href /
+RUN flutter build web --release --base-href /
 
 # Runtime stage - use nginx to serve the built web app
 FROM nginx:alpine
