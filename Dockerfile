@@ -42,6 +42,10 @@ RUN chmod +x /scripts/*.sh
 # Expose port 80
 EXPOSE 80
 
+# Health check
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+
 # Use entrypoint script to generate config and start nginx
-ENTRYPOINT ["/scripts/docker-entrypoint.sh"]
+CMD ["/scripts/docker-entrypoint.sh"]
 
