@@ -18,11 +18,11 @@ import java.util.Optional;
 @Service
 public class NotificationService {
     
-    private final FirebaseMessaging firebaseMessaging;
-    
     @Autowired(required = false)
-    public NotificationService(FirebaseMessaging firebaseMessaging) {
-        this.firebaseMessaging = firebaseMessaging;
+    private FirebaseMessaging firebaseMessaging;
+    
+    public NotificationService() {
+        // Default constructor for Spring
     }
     
     public boolean isFirebaseEnabled() {
