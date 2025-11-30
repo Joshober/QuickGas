@@ -13,6 +13,7 @@ RUN flutter pub get
 COPY . .
 
 # Build Flutter web app
+# Note: .env file is included in assets and will be loaded at runtime
 RUN flutter build web --release --web-renderer html
 
 # Runtime stage - use nginx to serve the built web app
