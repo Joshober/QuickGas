@@ -47,8 +47,7 @@ windows/
 backend/
 backend-java/
 
-# Scripts
-scripts/
+# Scripts (but keep runtime scripts for Docker)
 make_config.*
 
 # Other
