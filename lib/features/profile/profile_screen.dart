@@ -88,12 +88,22 @@ class ProfileScreen extends ConsumerWidget {
                           final firebaseService = ref.read(
                             firebaseServiceProvider,
                           );
+                          final newRole = value
+                              ? AppConstants.roleDriver
+                              : AppConstants.roleCustomer;
+                          
                           await firebaseService.updateUserRole(
                             profile.id,
-                            value
-                                ? AppConstants.roleDriver
-                                : AppConstants.roleCustomer,
+                            newRole,
                           );
+                          
+                          // Wait a moment for Firestore to update
+                          await Future.delayed(const Duration(milliseconds: 500));
+                          
+                          // Navigate to home to refresh the UI
+                          if (context.mounted) {
+                            context.go('/home');
+                          }
                         },
                       ),
                     ),

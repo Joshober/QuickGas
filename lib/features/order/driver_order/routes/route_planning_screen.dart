@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/providers/auth_provider.dart';
 import '../../../../core/animations/page_transitions.dart';
@@ -10,8 +11,13 @@ import 'add_order_to_route_screen.dart';
 
 class RoutePlanningScreen extends ConsumerStatefulWidget {
   final OrderModel initialOrder;
+  final List<OrderModel>? additionalOrders;
 
-  const RoutePlanningScreen({super.key, required this.initialOrder});
+  const RoutePlanningScreen({
+    super.key,
+    required this.initialOrder,
+    this.additionalOrders,
+  });
 
   @override
   ConsumerState<RoutePlanningScreen> createState() =>
@@ -28,6 +34,17 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
   void initState() {
     super.initState();
     _selectedOrders.add(widget.initialOrder);
+    // Add additional orders if provided
+    if (widget.additionalOrders != null) {
+      _selectedOrders.addAll(widget.additionalOrders!);
+    }
+    // Initialize waypoints with all selected orders
+    _waypoints = _selectedOrders
+        .map(
+          (order) =>
+              RoutePoint(order.location.latitude, order.location.longitude),
+        )
+        .toList();
   }
 
   Future<void> _addOrderToRoute() async {
@@ -41,9 +58,14 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
     if (selectedOrder != null) {
       setState(() {
         _selectedOrders.add(selectedOrder);
-
+        // Update waypoints to show all selected orders
+        _waypoints = _selectedOrders
+            .map(
+              (order) =>
+                  RoutePoint(order.location.latitude, order.location.longitude),
+            )
+            .toList();
         _optimizedRoute = null;
-        _waypoints = [];
       });
     }
   }
@@ -109,6 +131,55 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
     }
   }
 
+  Future<void> _openInGoogleMaps() async {
+    if (_optimizedRoute == null || _optimizedRoute!.waypoints.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please optimize the route first')),
+      );
+      return;
+    }
+
+    try {
+      final waypoints = _optimizedRoute!.waypoints;
+      final origin = waypoints.first;
+      final destination = waypoints.last;
+
+      // Build waypoints string (exclude origin and destination)
+      String waypointsParam = '';
+      if (waypoints.length > 2) {
+        final intermediateWaypoints = waypoints
+            .sublist(1, waypoints.length - 1)
+            .map((p) => '${p.latitude},${p.longitude}')
+            .join('|');
+        waypointsParam = '&waypoints=$intermediateWaypoints';
+      }
+
+      // Google Maps URL format with waypoints
+      final url =
+          'https://www.google.com/maps/dir/?api=1&origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}$waypointsParam&travelmode=driving';
+
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open Google Maps')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open Google Maps: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _acceptOrders() async {
     if (_selectedOrders.isEmpty) return;
 
@@ -117,13 +188,18 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
     try {
       final firebaseService = ref.read(firebaseServiceProvider);
       final authState = ref.read(authStateProvider);
+      final backendService = ref.read(backendServiceProvider);
 
       if (authState.value == null) {
         throw Exception('Driver not authenticated');
       }
 
       for (final order in _selectedOrders) {
-        await firebaseService.acceptOrder(order.id, authState.value!.uid);
+        await firebaseService.acceptOrder(
+          order.id,
+          authState.value!.uid,
+          backendService: backendService,
+        );
       }
 
       if (mounted) {
@@ -178,12 +254,13 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
       ),
       body: Column(
         children: [
-
           Expanded(
             flex: 2,
             child: MapWidget(
               waypoints: _waypoints,
               showRoute: _optimizedRoute != null,
+              routePolyline: _optimizedRoute?.polyline,
+              optimizedRoute: _optimizedRoute,
             ),
           ),
 
@@ -227,6 +304,20 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _openInGoogleMaps,
+                      icon: const Icon(Icons.navigation),
+                      label: const Text('Open in Google Maps'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        backgroundColor: AppTheme.secondaryColor,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -267,6 +358,15 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
                               onPressed: () {
                                 setState(() {
                                   _selectedOrders.removeAt(index);
+                                  // Update waypoints after removing order
+                                  _waypoints = _selectedOrders
+                                      .map(
+                                        (order) => RoutePoint(
+                                          order.location.latitude,
+                                          order.location.longitude,
+                                        ),
+                                      )
+                                      .toList();
                                   if (_optimizedRoute != null) {
                                     _optimizedRoute = null;
                                   }

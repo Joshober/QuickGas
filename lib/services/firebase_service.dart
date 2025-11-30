@@ -1,15 +1,13 @@
-import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../shared/models/user_model.dart';
 import '../shared/models/order_model.dart';
 import '../core/constants/app_constants.dart';
+import 'backend_service.dart';
 
 class FirebaseService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
 
   User? get currentUser => _auth.currentUser;
 
@@ -136,6 +134,7 @@ class FirebaseService {
     required double gasQuantity,
     String? specialInstructions,
     required String paymentMethod,
+    BackendService? backendService,
   }) async {
     final orderModel = OrderModel(
       id: '', // Will be set by Firestore
@@ -155,7 +154,56 @@ class FirebaseService {
         .collection(AppConstants.ordersCollection)
         .add(orderModel.toFirestore());
 
+    // Notify all drivers about new order
+    if (backendService != null) {
+      _notifyDriversNewOrder(
+        backendService,
+        docRef.id,
+        address,
+        gasQuantity,
+      ).catchError((e) => print('Failed to notify drivers: $e'));
+    }
+
     return docRef.id;
+  }
+
+  Future<void> _notifyDriversNewOrder(
+    BackendService backendService,
+    String orderId,
+    String address,
+    double gasQuantity,
+  ) async {
+    try {
+      // Get all drivers
+      final driversSnapshot = await _firestore
+          .collection(AppConstants.usersCollection)
+          .where('role', whereIn: ['driver', 'both'])
+          .get();
+
+      final driverTokens = <String>[];
+      for (var doc in driversSnapshot.docs) {
+        final fcmToken = doc.data()['fcmToken'] as String?;
+        if (fcmToken != null && fcmToken.isNotEmpty) {
+          driverTokens.add(fcmToken);
+        }
+      }
+
+      if (driverTokens.isNotEmpty) {
+        await backendService.sendBatchNotifications(
+          fcmTokens: driverTokens,
+          title: 'New Order Available',
+          body: '${gasQuantity.toStringAsFixed(0)} gallons at $address',
+          data: {
+            'type': 'new_order',
+            'orderId': orderId,
+            'address': address,
+            'gasQuantity': gasQuantity.toString(),
+          },
+        );
+      }
+    } catch (e) {
+      print('Error notifying drivers: $e');
+    }
   }
 
   Future<OrderModel?> getOrder(String orderId) async {
@@ -217,7 +265,11 @@ class FirebaseService {
         );
   }
 
-  Future<void> updateOrderStatus(String orderId, String status) async {
+  Future<void> updateOrderStatus(
+    String orderId,
+    String status, {
+    BackendService? backendService,
+  }) async {
     await _firestore
         .collection(AppConstants.ordersCollection)
         .doc(orderId)
@@ -225,9 +277,93 @@ class FirebaseService {
           'status': status,
           'updatedAt': Timestamp.fromDate(DateTime.now()),
         });
+
+    // Send notification if backend service is available
+    if (backendService != null) {
+      _notifyOrderStatusChange(
+        backendService,
+        orderId,
+        status,
+      ).catchError((e) => print('Failed to send status notification: $e'));
+    }
   }
 
-  Future<void> acceptOrder(String orderId, String driverId) async {
+  Future<void> _notifyOrderStatusChange(
+    BackendService backendService,
+    String orderId,
+    String status,
+  ) async {
+    try {
+      final orderDoc = await _firestore
+          .collection(AppConstants.ordersCollection)
+          .doc(orderId)
+          .get();
+
+      if (!orderDoc.exists) return;
+
+      final orderData = orderDoc.data()!;
+      final customerId = orderData['customerId'] as String?;
+
+      String title;
+      String body;
+      String? recipientId;
+      String notificationType;
+
+      switch (status) {
+        case AppConstants.orderStatusAccepted:
+          title = 'Order Accepted';
+          body = 'A driver has accepted your order';
+          recipientId = customerId;
+          notificationType = 'order_accepted';
+          break;
+        case AppConstants.orderStatusInTransit:
+          title = 'Order In Transit';
+          body = 'Your order is on the way';
+          recipientId = customerId;
+          notificationType = 'order_in_transit';
+          break;
+        case AppConstants.orderStatusCompleted:
+          title = 'Order Completed';
+          body = 'Your order has been delivered';
+          recipientId = customerId;
+          notificationType = 'order_completed';
+          break;
+        default:
+          return; // Don't send notification for other statuses
+      }
+
+      if (recipientId != null) {
+        final userDoc = await _firestore
+            .collection(AppConstants.usersCollection)
+            .doc(recipientId)
+            .get();
+
+        if (userDoc.exists) {
+          final fcmToken = userDoc.data()?['fcmToken'] as String?;
+          if (fcmToken != null && fcmToken.isNotEmpty) {
+            await backendService.sendNotification(
+              fcmToken: fcmToken,
+              title: title,
+              body: body,
+              data: {
+                'type': notificationType,
+                'orderId': orderId,
+                'status': status,
+              },
+            );
+          }
+        }
+      }
+    } catch (e) {
+      print('Error sending status notification: $e');
+    }
+  }
+
+  Future<void> acceptOrder(
+    String orderId,
+    String driverId, {
+    BackendService? backendService,
+  }) async {
     await _firestore
         .collection(AppConstants.ordersCollection)
         .doc(orderId)
@@ -236,28 +372,124 @@ class FirebaseService {
           'status': AppConstants.orderStatusAccepted,
           'updatedAt': Timestamp.fromDate(DateTime.now()),
         });
+
+    // Notify customer that order was accepted
+    if (backendService != null) {
+      _notifyOrderStatusChange(
+        backendService,
+        orderId,
+        AppConstants.orderStatusAccepted,
+      ).catchError((e) => print('Failed to notify customer: $e'));
+    }
   }
 
   Future<void> updateOrderWithDeliveryPhoto(
     String orderId,
-    String photoUrl,
-  ) async {
+    String photoBase64, {
+    BackendService? backendService,
+    String? photoUrl, // URL from backend if image was uploaded there
+  }) async {
+    // Use backend URL if available, otherwise fall back to base64
+    final photoUrlToStore = photoUrl ?? photoBase64;
+
     await _firestore
         .collection(AppConstants.ordersCollection)
         .doc(orderId)
         .update({
-          'deliveryPhotoUrl': photoUrl,
+          'deliveryPhotoUrl': photoUrlToStore,
           'deliveryVerifiedAt': Timestamp.fromDate(DateTime.now()),
           'status': AppConstants.orderStatusCompleted,
           'updatedAt': Timestamp.fromDate(DateTime.now()),
         });
+
+    // Notify customer that delivery is completed
+    if (backendService != null) {
+      _notifyOrderStatusChange(
+        backendService,
+        orderId,
+        AppConstants.orderStatusCompleted,
+      ).catchError((e) => print('Failed to notify customer: $e'));
+    }
   }
 
-  Future<String> uploadDeliveryPhoto(String orderId, String filePath) async {
-    final ref = _storage.ref().child(
-      'delivery_photos/$orderId/${DateTime.now().millisecondsSinceEpoch}.jpg',
+  // Real-time location tracking
+  Future<void> updateDriverLocation(String orderId, GeoPoint location) async {
+    await _firestore
+        .collection(AppConstants.ordersCollection)
+        .doc(orderId)
+        .update({
+          'driverLocation': location,
+          'updatedAt': Timestamp.fromDate(DateTime.now()),
+        });
+  }
+
+  // Update ETA for an order
+  Future<void> updateOrderETA(
+    String orderId,
+    double estimatedTimeMinutes,
+  ) async {
+    final estimatedArrival = DateTime.now().add(
+      Duration(minutes: estimatedTimeMinutes.round()),
     );
-    await ref.putFile(File(filePath));
-    return await ref.getDownloadURL();
+
+    await _firestore
+        .collection(AppConstants.ordersCollection)
+        .doc(orderId)
+        .update({
+          'estimatedTimeMinutes': estimatedTimeMinutes,
+          'estimatedArrivalTime': Timestamp.fromDate(estimatedArrival),
+          'updatedAt': Timestamp.fromDate(DateTime.now()),
+        });
+  }
+
+  // Update order payment information
+  Future<void> updateOrderPayment(
+    String orderId, {
+    String? stripePaymentId,
+    String? paymentStatus,
+  }) async {
+    final updateData = <String, dynamic>{
+      'updatedAt': Timestamp.fromDate(DateTime.now()),
+    };
+
+    if (stripePaymentId != null) {
+      updateData['stripePaymentId'] = stripePaymentId;
+    }
+
+    if (paymentStatus != null) {
+      updateData['paymentStatus'] = paymentStatus;
+    }
+
+    await _firestore
+        .collection(AppConstants.ordersCollection)
+        .doc(orderId)
+        .update(updateData);
+  }
+
+  // Update order status and notify customer
+  Future<void> updateOrderStatusWithNotification(
+    String orderId,
+    String status,
+    String? customerFcmToken,
+    BackendService? backendService,
+  ) async {
+    await updateOrderStatus(orderId, status);
+
+    // Send notification to customer if FCM token and backend service available
+    if (customerFcmToken != null &&
+        customerFcmToken.isNotEmpty &&
+        backendService != null) {
+      try {
+        await backendService.sendNotification(
+          fcmToken: customerFcmToken,
+          title: 'Order Update',
+          body: 'Your order status: ${status.toUpperCase()}',
+          data: {'orderId': orderId, 'status': status},
+        );
+      } catch (e) {
+        // Notification failure shouldn't block status update
+        print('Failed to send notification: $e');
+      }
+    }
   }
 }

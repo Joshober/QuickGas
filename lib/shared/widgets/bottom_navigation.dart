@@ -22,14 +22,9 @@ class BottomNavigation extends StatelessWidget {
           label: 'Home',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.route_outlined),
-          activeIcon: Icon(Icons.route),
-          label: 'Routes',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.local_shipping_outlined),
-          activeIcon: Icon(Icons.local_shipping),
-          label: 'Deliveries',
+          icon: Icon(Icons.list_alt_outlined),
+          activeIcon: Icon(Icons.list_alt),
+          label: 'Orders',
         ),
         BottomNavigationBarItem(
           icon: Icon(Icons.person_outline),
@@ -50,11 +45,6 @@ class BottomNavigation extends StatelessWidget {
           label: 'Orders',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.location_on_outlined),
-          activeIcon: Icon(Icons.location_on),
-          label: 'Tracking',
-        ),
-        BottomNavigationBarItem(
           icon: Icon(Icons.person_outline),
           activeIcon: Icon(Icons.person),
           label: 'Profile',
@@ -73,9 +63,6 @@ class BottomNavigation extends StatelessWidget {
           context.go('/driver/routes');
           break;
         case 2:
-          context.go('/driver/deliveries');
-          break;
-        case 3:
           context.go('/driver/profile');
           break;
       }
@@ -88,9 +75,6 @@ class BottomNavigation extends StatelessWidget {
           context.go('/customer/orders');
           break;
         case 2:
-          context.go('/customer/tracking');
-          break;
-        case 3:
           context.go('/customer/profile');
           break;
       }

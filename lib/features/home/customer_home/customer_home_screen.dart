@@ -7,7 +7,7 @@ import '../../../shared/widgets/bottom_navigation.dart';
 import '../../order/customer_order/order_list_screen.dart'
     hide firebaseServiceProvider;
 import '../../order/customer_order/create_order_screen.dart';
-import '../../tracking/customer_tracking/tracking_screen.dart';
+import '../../order/customer_order/order_detail_screen.dart';
 import '../../profile/profile_screen.dart';
 import '../../../core/animations/page_transitions.dart';
 import '../../../shared/models/order_model.dart';
@@ -61,7 +61,6 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen>
           children: [
             _buildHomeTab(userProfile),
             const OrderListScreen(),
-            const TrackingScreen(),
             const ProfileScreen(),
           ],
         ),
@@ -113,12 +112,17 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen>
                 )
                 .length;
 
+            // Get recent orders (last 5, sorted by creation date)
+            final recentOrders = orders
+              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            final displayOrders = recentOrders.take(5).toList();
+
             return SingleChildScrollView(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-
+                  // Stats row
                   Row(
                     children: [
                       Expanded(
@@ -140,51 +144,160 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 24),
 
-                  Text(
-                    'Quick Actions',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
+                  // Recent Orders Section
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        child: _buildActionCard(
-                          'New Order',
-                          Icons.add_circle_outline,
-                          AppTheme.primaryColor,
-                          () {
+                      Text(
+                        'Recent Orders',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (orders.isNotEmpty)
+                        TextButton(
+                          onPressed: () {
+                            _onTabChanged(1);
+                          },
+                          child: const Text('View All'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Recent orders list
+                  if (displayOrders.isEmpty)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32.0),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.shopping_cart_outlined,
+                              size: 48,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No orders yet',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(color: Colors.grey[600]),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Create your first order to get started',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: Colors.grey[500]),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    ...displayOrders.map((order) {
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: _getStatusColor(order.status),
+                            child: Icon(
+                              _getStatusIcon(order.status),
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                          title: Text('Order #${order.id.substring(0, 8)}'),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                order.address,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                order.status.toUpperCase(),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: _getStatusColor(order.status),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                              ),
+                            ],
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
                             Navigator.of(context).push(
                               PageTransitions.slideTransition(
-                                const CreateOrderScreen(),
+                                OrderDetailScreen(orderId: order.id),
                               ),
                             );
                           },
                         ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _buildActionCard(
-                          'My Orders',
-                          Icons.list_alt,
-                          AppTheme.secondaryColor,
-                          () {
-                            _onTabChanged(1);
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
+                      );
+                    }).toList(),
                 ],
               ),
             );
           },
         ),
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          Navigator.of(context).push(
+            PageTransitions.slideTransition(const CreateOrderScreen()),
+          );
+        },
+        icon: const Icon(Icons.add),
+        label: const Text('New Order'),
+        backgroundColor: AppTheme.primaryColor,
+        foregroundColor: Colors.white,
+      ),
     );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case AppConstants.orderStatusPending:
+        return AppTheme.warningColor;
+      case AppConstants.orderStatusAccepted:
+        return AppTheme.primaryColor;
+      case AppConstants.orderStatusInTransit:
+        return AppTheme.secondaryColor;
+      case AppConstants.orderStatusCompleted:
+        return AppTheme.successColor;
+      case AppConstants.orderStatusCancelled:
+        return AppTheme.errorColor;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status) {
+      case AppConstants.orderStatusPending:
+        return Icons.pending;
+      case AppConstants.orderStatusAccepted:
+        return Icons.check_circle;
+      case AppConstants.orderStatusInTransit:
+        return Icons.local_shipping;
+      case AppConstants.orderStatusCompleted:
+        return Icons.check;
+      case AppConstants.orderStatusCancelled:
+        return Icons.cancel;
+      default:
+        return Icons.help;
+    }
   }
 
   Widget _buildStatCard(
@@ -220,34 +333,4 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen>
     );
   }
 
-  Widget _buildActionCard(
-    String label,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
-    return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              Icon(icon, color: color, size: 48),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

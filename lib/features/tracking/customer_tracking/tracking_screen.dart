@@ -4,6 +4,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/providers/auth_provider.dart';
 import '../../../shared/models/order_model.dart';
+import '../../../shared/widgets/base64_image_widget.dart';
 import '../../map/map_widget.dart';
 import '../../../services/traffic_service.dart';
 
@@ -124,6 +125,37 @@ class TrackingScreen extends ConsumerWidget {
                           ),
                           const SizedBox(height: 8),
                           if (order.driverId != null) Text('Driver assigned'),
+                          if (order.estimatedTimeMinutes != null) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(Icons.access_time, size: 16),
+                                const SizedBox(width: 8),
+                                Text(
+                                  order.estimatedArrivalTime != null
+                                      ? 'ETA: ${_formatTime(order.estimatedArrivalTime!)} (${order.estimatedTimeMinutes!.toStringAsFixed(0)} min)'
+                                      : 'ETA: ${order.estimatedTimeMinutes!.toStringAsFixed(0)} minutes',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                              ],
+                            ),
+                          ],
+                          if (order.driverLocation != null) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(Icons.my_location, size: 16, color: Colors.green),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Driver location: Live tracking',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           if (order.deliveryPhotoUrl != null) ...[
                             const SizedBox(height: 16),
                             Text(
@@ -133,8 +165,8 @@ class TrackingScreen extends ConsumerWidget {
                             const SizedBox(height: 8),
                             ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.network(
-                                order.deliveryPhotoUrl!,
+                              child: Base64ImageWidget(
+                                imageString: order.deliveryPhotoUrl,
                                 height: 150,
                                 width: double.infinity,
                                 fit: BoxFit.cover,
@@ -178,5 +210,12 @@ class TrackingScreen extends ConsumerWidget {
       default:
         return Icons.help;
     }
+  }
+
+  String _formatTime(DateTime dateTime) {
+    final hour = dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final amPm = dateTime.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $amPm';
   }
 }

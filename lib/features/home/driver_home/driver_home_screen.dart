@@ -5,8 +5,10 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/providers/auth_provider.dart';
 import '../../../shared/widgets/bottom_navigation.dart';
 import '../../order/driver_order/routes/routes_screen.dart';
-import '../../order/driver_order/deliveries/deliveries_screen.dart';
+import '../../order/driver_order/deliveries/delivery_detail_screen.dart';
+import '../../order/driver_order/deliveries/delivery_route_screen.dart';
 import '../../profile/profile_screen.dart';
+import '../../../core/animations/page_transitions.dart';
 import '../../../shared/models/order_model.dart';
 
 class DriverHomeScreen extends ConsumerStatefulWidget {
@@ -58,7 +60,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen>
           children: [
             _buildHomeTab(userProfile),
             const RoutesScreen(),
-            const DeliveriesScreen(),
             const ProfileScreen(),
           ],
         ),
@@ -110,12 +111,24 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen>
                         .length ??
                     0;
 
+                // Get active orders for display
+                final activeOrdersList =
+                    driverSnapshot.data
+                        ?.where(
+                          (order) =>
+                              order.status ==
+                                  AppConstants.orderStatusAccepted ||
+                              order.status == AppConstants.orderStatusInTransit,
+                        )
+                        .toList() ??
+                    [];
+
                 return SingleChildScrollView(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-
+                      // Stats row
                       Row(
                         children: [
                           Expanded(
@@ -137,40 +150,172 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen>
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 24),
 
-                      Text(
-                        'Quick Actions',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
+                      // Active Deliveries Section
                       Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Expanded(
-                            child: _buildActionCard(
-                              'View Orders',
-                              Icons.list_alt,
-                              AppTheme.primaryColor,
-                              () {
+                          Text(
+                            'Active Deliveries',
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          if (activeOrdersList.isNotEmpty)
+                            TextButton(
+                              onPressed: () {
                                 _onTabChanged(1);
                               },
+                              child: const Text('View All'),
                             ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildActionCard(
-                              'My Deliveries',
-                              Icons.local_shipping,
-                              AppTheme.secondaryColor,
-                              () {
-                                _onTabChanged(2);
-                              },
-                            ),
-                          ),
                         ],
                       ),
+                      const SizedBox(height: 8),
+
+                      // Active deliveries list (max 5)
+                      if (activeOrdersList.isEmpty)
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32.0),
+                            child: Column(
+                              children: [
+                                Icon(
+                                  Icons.local_shipping_outlined,
+                                  size: 48,
+                                  color: Colors.grey[400],
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No active deliveries',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(color: Colors.grey[600]),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Accept orders to start delivering',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: Colors.grey[500]),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 16),
+                                ElevatedButton.icon(
+                                  onPressed: () {
+                                    _onTabChanged(1);
+                                  },
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('Find Orders'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppTheme.primaryColor,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else ...[
+                        // Show route optimization button if 2+ orders
+                        if (activeOrdersList.length >= 2)
+                          Card(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            child: InkWell(
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  PageTransitions.slideTransition(
+                                    DeliveryRouteScreen(
+                                      orders: activeOrdersList,
+                                    ),
+                                  ),
+                                );
+                              },
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.route,
+                                      color: AppTheme.primaryColor,
+                                      size: 32,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Optimize Route',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                          ),
+                                          Text(
+                                            '${activeOrdersList.length} stops',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                  color: Colors.grey[600],
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const Icon(Icons.chevron_right),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        // Show recent active orders
+                        ...activeOrdersList.take(5).map((order) {
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: _getStatusColor(order.status),
+                                child: Icon(
+                                  _getStatusIcon(order.status),
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ),
+                              title: Text('Order #${order.id.substring(0, 8)}'),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    order.address,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    order.status.toUpperCase(),
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: _getStatusColor(order.status),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  PageTransitions.slideTransition(
+                                    DeliveryDetailScreen(order: order),
+                                  ),
+                                );
+                              },
+                            ),
+                          );
+                        }).toList(),
+                      ],
                     ],
                   ),
                 );
@@ -179,7 +324,38 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen>
           },
         ),
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          _onTabChanged(1);
+        },
+        icon: const Icon(Icons.search),
+        label: const Text('Find Orders'),
+        backgroundColor: AppTheme.primaryColor,
+        foregroundColor: Colors.white,
+      ),
     );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case AppConstants.orderStatusAccepted:
+        return AppTheme.primaryColor;
+      case AppConstants.orderStatusInTransit:
+        return AppTheme.secondaryColor;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status) {
+      case AppConstants.orderStatusAccepted:
+        return Icons.check_circle;
+      case AppConstants.orderStatusInTransit:
+        return Icons.local_shipping;
+      default:
+        return Icons.help;
+    }
   }
 
   Widget _buildStatCard(
@@ -210,37 +386,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen>
               ).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionCard(
-    String label,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
-    return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              Icon(icon, color: color, size: 48),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
         ),
       ),
     );

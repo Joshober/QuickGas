@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 void main() async {
   final envFile = File('.env');
@@ -7,9 +8,21 @@ void main() async {
     exit(1);
   }
 
-  final envContent = await envFile.readAsString();
+  String envContent;
+  try {
+    envContent = await envFile.readAsString(encoding: utf8);
+  } catch (e) {
+    try {
+      final bytes = await envFile.readAsBytes();
+      envContent = utf8.decode(bytes, allowMalformed: true);
+    } catch (e2) {
+      print('Error: Failed to read .env file: $e2');
+      exit(1);
+    }
+  }
+
   final envMap = <String, String>{};
-  
+
   for (final line in envContent.split('\n')) {
     final trimmed = line.trim();
     if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
@@ -33,17 +46,26 @@ void _generateAndroidConfig(Map<String, String> env) {
   final packageName = env['FIREBASE_ANDROID_PACKAGE_NAME'] ?? '';
   final appId = env['FIREBASE_ANDROID_APP_ID'] ?? '';
 
-  if (apiKey.isEmpty || projectNumber.isEmpty || projectId.isEmpty || 
-      packageName.isEmpty || appId.isEmpty) {
+  if (apiKey.isEmpty ||
+      projectNumber.isEmpty ||
+      projectId.isEmpty ||
+      packageName.isEmpty ||
+      appId.isEmpty) {
     print('Warning: Missing required Android Firebase env variables');
-    print('Required: FIREBASE_ANDROID_API_KEY, FIREBASE_PROJECT_NUMBER, FIREBASE_PROJECT_ID, FIREBASE_ANDROID_PACKAGE_NAME, FIREBASE_ANDROID_APP_ID');
+    print(
+      'Required: FIREBASE_ANDROID_API_KEY, FIREBASE_PROJECT_NUMBER, FIREBASE_PROJECT_ID, FIREBASE_ANDROID_PACKAGE_NAME, FIREBASE_ANDROID_APP_ID',
+    );
     return;
   }
 
-  final storageBucket = env['FIREBASE_STORAGE_BUCKET'] ?? '$projectId.firebasestorage.app';
-  final databaseUrl = env['FIREBASE_DATABASE_URL'] ?? 'https://$projectId-default-rtdb.firebaseio.com';
-  
-  final jsonContent = '''
+  final storageBucket =
+      env['FIREBASE_STORAGE_BUCKET'] ?? '$projectId.firebasestorage.app';
+  final databaseUrl =
+      env['FIREBASE_DATABASE_URL'] ??
+      'https://$projectId-default-rtdb.firebaseio.com';
+
+  final jsonContent =
+      '''
 {
   "project_info": {
     "project_number": "$projectNumber",
@@ -91,21 +113,27 @@ void _generateIOSConfig(Map<String, String> env) {
   final databaseUrl = env['FIREBASE_DATABASE_URL'] ?? '';
   final storageBucket = env['FIREBASE_STORAGE_BUCKET'] ?? '';
 
-  if (apiKey.isEmpty || projectNumber.isEmpty || projectId.isEmpty || 
-      bundleId.isEmpty || appId.isEmpty) {
+  if (apiKey.isEmpty ||
+      projectNumber.isEmpty ||
+      projectId.isEmpty ||
+      bundleId.isEmpty ||
+      appId.isEmpty) {
     print('Warning: Missing required iOS Firebase env variables');
-    print('Required: FIREBASE_IOS_API_KEY, FIREBASE_PROJECT_NUMBER, FIREBASE_PROJECT_ID, FIREBASE_IOS_BUNDLE_ID, FIREBASE_IOS_APP_ID');
+    print(
+      'Required: FIREBASE_IOS_API_KEY, FIREBASE_PROJECT_NUMBER, FIREBASE_PROJECT_ID, FIREBASE_IOS_BUNDLE_ID, FIREBASE_IOS_APP_ID',
+    );
     return;
   }
 
-  final dbUrl = databaseUrl.isNotEmpty 
-      ? databaseUrl 
+  final dbUrl = databaseUrl.isNotEmpty
+      ? databaseUrl
       : 'https://$projectId-default-rtdb.firebaseio.com';
-  final storage = storageBucket.isNotEmpty 
-      ? storageBucket 
+  final storage = storageBucket.isNotEmpty
+      ? storageBucket
       : '$projectId.firebasestorage.app';
 
-  final plistContent = '''<?xml version="1.0" encoding="UTF-8"?>
+  final plistContent =
+      '''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

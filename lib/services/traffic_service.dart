@@ -1,6 +1,5 @@
-import 'package:dio/dio.dart';
 import 'package:geolocator/geolocator.dart';
-import '../core/constants/app_constants.dart';
+import 'google_maps_service.dart';
 
 class RoutePoint {
   final double latitude;
@@ -31,6 +30,7 @@ class OptimizedRoute {
   final double totalDistance; // in km
   final double totalDuration; // in minutes
   final List<double> etas; // ETAs for each segment in minutes
+  final String? polyline; // Google Maps encoded polyline
 
   OptimizedRoute({
     required this.waypoints,
@@ -38,58 +38,12 @@ class OptimizedRoute {
     required this.totalDistance,
     required this.totalDuration,
     required this.etas,
+    this.polyline,
   });
 }
 
 class TrafficService {
-  final Dio _dio = Dio();
-  String? _apiKey;
-
-  void setApiKey(String apiKey) {
-    _apiKey = apiKey;
-  }
-
-  Future<Map<String, double>> calculateDistanceMatrix(
-    List<RoutePoint> points,
-  ) async {
-    if (_apiKey == null) {
-      throw Exception('OpenRouteService API key not set');
-    }
-
-    final coordinates = points.map((p) => [p.longitude, p.latitude]).toList();
-
-    try {
-      final response = await _dio.post(
-        '${AppConstants.openRouteServiceBaseUrl}/matrix/driving-car',
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer $_apiKey',
-            'Content-Type': 'application/json',
-          },
-        ),
-        data: {
-          'locations': coordinates,
-          'metrics': ['distance', 'duration'],
-        },
-      );
-
-      final distances = response.data['distances'] as List;
-
-      final distanceMap = <String, double>{};
-      for (int i = 0; i < points.length; i++) {
-        for (int j = 0; j < points.length; j++) {
-          if (i != j) {
-            final key = '$i-$j';
-            distanceMap[key] = (distances[i][j] as num).toDouble();
-          }
-        }
-      }
-
-      return distanceMap;
-    } catch (e) {
-      throw Exception('Failed to calculate distance matrix: $e');
-    }
-  }
+  final GoogleMapsDirectionsService _googleMapsService = GoogleMapsDirectionsService();
 
   Future<OptimizedRoute> optimizeRoute(
     RoutePoint start,
@@ -100,84 +54,170 @@ class TrafficService {
       throw Exception('No stops provided');
     }
 
-    final allPoints = [start, ...stops];
-    if (end != null) {
-      allPoints.add(end);
+    // Determine origin and destination
+    final origin = start;
+    final destination = end ?? stops.last; // Use last stop as destination if no end point
+    
+    // Prepare waypoints (exclude destination if it's in stops)
+    List<Map<String, double>>? waypoints;
+    if (stops.length > 1) {
+      // If destination is the last stop, exclude it from waypoints
+      final waypointStops = destination == stops.last 
+          ? stops.sublist(0, stops.length - 1)
+          : stops;
+      waypoints = waypointStops.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList();
+    } else if (stops.length == 1 && destination != stops.first) {
+      // Single stop that's different from destination
+      waypoints = [{'lat': stops.first.latitude, 'lng': stops.first.longitude}];
     }
+    // If stops.length == 1 and destination == stops.first, no waypoints needed
 
-    final distanceMatrix = await calculateDistanceMatrix(allPoints);
-
-    final visited = <int>{0}; // Start at index 0
-    final route = [0];
-    var currentIndex = 0;
-
-    while (visited.length < stops.length + 1) {
-      int? nearestIndex;
-      double? nearestDistance;
-
-      for (int i = 1; i < allPoints.length; i++) {
-        if (!visited.contains(i)) {
-          final key = '$currentIndex-$i';
-          final distance = distanceMatrix[key];
-          if (distance != null &&
-              (nearestDistance == null || distance < nearestDistance)) {
-            nearestDistance = distance;
-            nearestIndex = i;
-          }
-        }
+    // Get optimized route from Google Maps
+    // Note: optimize:true may require Premium plan - try with optimization first
+    Map<String, dynamic> route;
+    try {
+      print('Requesting route from Google Maps:');
+      print('Origin: ${origin.latitude}, ${origin.longitude}');
+      print('Destination: ${destination.latitude}, ${destination.longitude}');
+      print('Waypoints: ${waypoints?.length ?? 0}');
+      print('Optimize waypoints: ${waypoints != null && waypoints.length > 1}');
+      
+      route = await _googleMapsService.getRoute(
+        originLat: origin.latitude,
+        originLng: origin.longitude,
+        destLat: destination.latitude,
+        destLng: destination.longitude,
+        waypoints: waypoints,
+        optimizeWaypoints: waypoints != null && waypoints.length > 1, // Only optimize if 2+ waypoints
+      );
+      
+      print('Route received successfully. Legs: ${(route['legs'] as List?)?.length ?? 0}');
+    } catch (e) {
+      // If optimization fails (might need Premium), try without optimization
+      print('Google Maps optimization failed, trying without optimization: $e');
+      try {
+        route = await _googleMapsService.getRoute(
+          originLat: origin.latitude,
+          originLng: origin.longitude,
+          destLat: destination.latitude,
+          destLng: destination.longitude,
+          waypoints: waypoints,
+          optimizeWaypoints: false, // Skip Google's optimization
+        );
+        print('Route received successfully (without optimization). Legs: ${(route['legs'] as List?)?.length ?? 0}');
+      } catch (e2) {
+        // If that also fails, rethrow with better error message
+        print('Both optimization attempts failed. Original: $e. Retry: $e2');
+        throw Exception('Failed to get route from Google Maps. Original error: $e. Retry error: $e2');
       }
-
-      if (nearestIndex != null) {
-        route.add(nearestIndex);
-        visited.add(nearestIndex);
-        currentIndex = nearestIndex;
-      } else {
-        break;
-      }
     }
 
-    if (end != null && !visited.contains(allPoints.length - 1)) {
-      route.add(allPoints.length - 1);
-    }
-
-    final optimizedWaypoints = route.map((index) => allPoints[index]).toList();
-
+    // Extract waypoint order from Google Maps response
+    final waypointList = _extractWaypointOrder(route, start, stops, destination);
+    
+    // Calculate segments and ETAs from route legs (Google Maps provides this)
     final segments = <RouteSegment>[];
     final etas = <double>[];
     double totalDistance = 0;
     double totalDuration = 0;
 
-    for (int i = 0; i < route.length - 1; i++) {
-      final fromIndex = route[i];
-      final toIndex = route[i + 1];
-      final key = '$fromIndex-$toIndex';
+    // Extract data from route legs (Google Maps provides detailed leg data)
+    // Google Maps returns legs as a list where each leg is a segment between waypoints
+    // Number of legs = number of waypoints + 1 (origin to first waypoint, waypoint to waypoint, last waypoint to destination)
+    final legs = route['legs'] as List? ?? [];
 
-      final distance = distanceMatrix[key] ?? 0.0;
-      final duration = (distance / 50.0) * 60; // Assume 50 km/h average speed
-      final eta = duration / 60.0; // Convert to minutes
+    // Process each leg (one leg per segment)
+    if (legs.isNotEmpty && waypointList.length >= 2) {
+      for (int i = 0; i < legs.length && i < waypointList.length; i++) {
+        final leg = legs[i];
+        
+        // Extract distance and duration from leg
+        final legDistance = (leg['distance']['value'] as num).toDouble() / 1000.0; // km
+        final legDuration = (leg['duration']['value'] as num).toDouble() / 60.0; // minutes
+        final legDurationInTraffic = leg['duration_in_traffic'] != null
+            ? (leg['duration_in_traffic']['value'] as num).toDouble() / 60.0
+            : legDuration;
 
+        // Each leg connects waypointList[i] to waypointList[i+1]
+        // If this is the last leg, it goes to the last waypoint
+        final segmentStart = waypointList[i];
+        final segmentEnd = i + 1 < waypointList.length 
+            ? waypointList[i + 1] 
+            : waypointList.last;
+
+        segments.add(
+          RouteSegment(
+            start: segmentStart,
+            end: segmentEnd,
+            distance: legDistance * 1000, // Convert km to meters
+            duration: legDurationInTraffic * 60, // Convert minutes to seconds
+            eta: legDurationInTraffic,
+          ),
+        );
+
+        etas.add(legDurationInTraffic);
+        totalDistance += legDistance;
+        totalDuration += legDurationInTraffic;
+      }
+    }
+
+    // Fallback if no legs data
+    if (legs.isEmpty && waypointList.length >= 2) {
+      totalDistance = route['distance'] as double? ?? 0.0;
+      totalDuration = route['durationInTraffic'] as double? ?? route['duration'] as double? ?? 0.0;
+      
       segments.add(
         RouteSegment(
-          start: allPoints[fromIndex],
-          end: allPoints[toIndex],
-          distance: distance,
-          duration: duration,
-          eta: eta,
+          start: waypointList[0],
+          end: waypointList[waypointList.length - 1],
+          distance: totalDistance * 1000,
+          duration: totalDuration * 60,
+          eta: totalDuration,
         ),
       );
-
-      etas.add(eta);
-      totalDistance += distance / 1000; // Convert to km
-      totalDuration += eta;
+      etas.add(totalDuration);
     }
 
     return OptimizedRoute(
-      waypoints: optimizedWaypoints,
+      waypoints: waypointList,
       segments: segments,
       totalDistance: totalDistance,
       totalDuration: totalDuration,
       etas: etas,
+      polyline: route['polyline'] as String?,
     );
+  }
+
+  // Extract waypoint order from Google Maps optimized route
+  List<RoutePoint> _extractWaypointOrder(
+    Map<String, dynamic> route,
+    RoutePoint start,
+    List<RoutePoint> stops,
+    RoutePoint destination,
+  ) {
+    // Google Maps returns waypoint_order in the response when optimize:true
+    // waypoint_order is an array of indices showing the optimized order
+    final waypointOrder = route['waypoint_order'] as List?;
+    
+    if (waypointOrder != null && waypointOrder.length == stops.length) {
+      // Reorder stops based on Google's optimization
+      final orderedStops = waypointOrder
+          .map((index) => stops[index as int])
+          .toList();
+      // If destination is same as last stop, don't duplicate
+      if (destination.latitude == stops.last.latitude && 
+          destination.longitude == stops.last.longitude) {
+        return [start, ...orderedStops];
+      }
+      return [start, ...orderedStops, destination];
+    }
+
+    // Fallback: use stops in original order
+    if (destination.latitude == stops.last.latitude && 
+        destination.longitude == stops.last.longitude) {
+      return [start, ...stops];
+    }
+    return [start, ...stops, destination];
   }
 
   List<RoutePoint> suggestNearbyStops(

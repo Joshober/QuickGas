@@ -6,14 +6,75 @@ import '../../../core/providers/auth_provider.dart';
 import '../../../core/animations/page_transitions.dart';
 import '../../../services/firebase_service.dart';
 import '../../../shared/models/order_model.dart';
+import '../../../shared/widgets/base64_image_widget.dart';
+import '../../../features/map/map_widget.dart';
+import '../../../services/traffic_service.dart';
 import 'create_order_screen.dart';
 import 'order_detail_screen.dart';
 
-class OrderListScreen extends ConsumerWidget {
+class OrderListScreen extends ConsumerStatefulWidget {
   const OrderListScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<OrderListScreen> createState() => _OrderListScreenState();
+}
+
+class _OrderListScreenState extends ConsumerState<OrderListScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  String _selectedFilter = 'all'; // 'all', 'active', 'completed'
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() {
+      setState(() {
+        switch (_tabController.index) {
+          case 0:
+            _selectedFilter = 'all';
+            break;
+          case 1:
+            _selectedFilter = 'active';
+            break;
+          case 2:
+            _selectedFilter = 'completed';
+            break;
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  List<OrderModel> _filterOrders(List<OrderModel> orders) {
+    switch (_selectedFilter) {
+      case 'active':
+        return orders
+            .where(
+              (order) =>
+                  order.status == AppConstants.orderStatusPending ||
+                  order.status == AppConstants.orderStatusAccepted ||
+                  order.status == AppConstants.orderStatusInTransit,
+            )
+            .toList();
+      case 'completed':
+        return orders
+            .where(
+              (order) => order.status == AppConstants.orderStatusCompleted,
+            )
+            .toList();
+      default:
+        return orders;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
     final orders = ref
         .watch(firebaseServiceProvider)
@@ -22,6 +83,14 @@ class OrderListScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Orders'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'All'),
+            Tab(text: 'Active'),
+            Tab(text: 'Completed'),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -44,28 +113,39 @@ class OrderListScreen extends ConsumerWidget {
             return Center(child: Text('Error: ${snapshot.error}'));
           }
 
-          final orderList = snapshot.data ?? [];
+          final allOrders = snapshot.data ?? [];
+          final filteredOrders = _filterOrders(allOrders);
 
-          if (orderList.isEmpty) {
+          if (filteredOrders.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    Icons.shopping_cart_outlined,
+                    _selectedFilter == 'active'
+                        ? Icons.location_on_outlined
+                        : _selectedFilter == 'completed'
+                            ? Icons.check_circle_outline
+                            : Icons.shopping_cart_outlined,
                     size: 64,
                     color: Colors.grey[400],
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'No orders yet',
+                    _selectedFilter == 'active'
+                        ? 'No active orders'
+                        : _selectedFilter == 'completed'
+                            ? 'No completed orders'
+                            : 'No orders yet',
                     style: Theme.of(
                       context,
                     ).textTheme.titleLarge?.copyWith(color: Colors.grey[600]),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Create your first order',
+                    _selectedFilter == 'all'
+                        ? 'Create your first order'
+                        : 'Orders will appear here',
                     style: Theme.of(
                       context,
                     ).textTheme.bodyMedium?.copyWith(color: Colors.grey[500]),
@@ -77,12 +157,15 @@ class OrderListScreen extends ConsumerWidget {
 
           return ListView.builder(
             padding: const EdgeInsets.all(16),
-            itemCount: orderList.length,
+            itemCount: filteredOrders.length,
             itemBuilder: (context, index) {
-              final order = orderList[index];
+              final order = filteredOrders[index];
+              final isActive = order.status == AppConstants.orderStatusAccepted ||
+                  order.status == AppConstants.orderStatusInTransit;
+
               return Card(
                 margin: const EdgeInsets.only(bottom: 16),
-                child: ListTile(
+                child: ExpansionTile(
                   leading: CircleAvatar(
                     backgroundColor: _getStatusColor(order.status),
                     child: Icon(
@@ -93,20 +176,183 @@ class OrderListScreen extends ConsumerWidget {
                   title: Text('Order #${order.id.substring(0, 8)}'),
                   subtitle: Text(order.address),
                   trailing: Icon(Icons.chevron_right, color: Colors.grey[400]),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      PageTransitions.slideTransition(
-                        OrderDetailScreen(orderId: order.id),
-                      ),
-                    );
+                  onExpansionChanged: (expanded) {
+                    // Optional: Load map data when expanded
                   },
+                  children: isActive
+                      ? [
+                          // Show map and tracking info for active orders
+                          SizedBox(
+                            height: 200,
+                            child: MapWidget(
+                              waypoints: [
+                                RoutePoint(
+                                  order.location.latitude,
+                                  order.location.longitude,
+                                ),
+                              ],
+                              showRoute: false,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Status: ${order.status.toUpperCase()}',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: _getStatusColor(order.status),
+                                      ),
+                                ),
+                                const SizedBox(height: 8),
+                                if (order.driverId != null)
+                                  Text('Driver assigned'),
+                                if (order.estimatedTimeMinutes != null) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.access_time, size: 16),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        order.estimatedArrivalTime != null
+                                            ? 'ETA: ${_formatTime(order.estimatedArrivalTime!)} (${order.estimatedTimeMinutes!.toStringAsFixed(0)} min)'
+                                            : 'ETA: ${order.estimatedTimeMinutes!.toStringAsFixed(0)} minutes',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium,
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                                if (order.driverLocation != null) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.my_location,
+                                          size: 16, color: Colors.green),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Driver location: Live tracking',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                              color: Colors.green,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                                if (order.deliveryPhotoUrl != null) ...[
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Delivery Photo',
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Base64ImageWidget(
+                                      imageString: order.deliveryPhotoUrl,
+                                      height: 150,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 16),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      Navigator.of(context).push(
+                                        PageTransitions.slideTransition(
+                                          OrderDetailScreen(orderId: order.id),
+                                        ),
+                                      );
+                                    },
+                                    child: const Text('View Details'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ]
+                      : [
+                          // Simple view for non-active orders
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Status: ${order.status.toUpperCase()}',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: _getStatusColor(order.status),
+                                      ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text('Gas Quantity: ${order.gasQuantity} gallons'),
+                                if (order.specialInstructions != null) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Instructions: ${order.specialInstructions}',
+                                  ),
+                                ],
+                                const SizedBox(height: 16),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      Navigator.of(context).push(
+                                        PageTransitions.slideTransition(
+                                          OrderDetailScreen(orderId: order.id),
+                                        ),
+                                      );
+                                    },
+                                    child: const Text('View Details'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                 ),
               );
             },
           );
         },
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          Navigator.of(context).push(
+            PageTransitions.slideTransition(const CreateOrderScreen()),
+          );
+        },
+        icon: const Icon(Icons.add),
+        label: const Text('New Order'),
+        backgroundColor: AppTheme.primaryColor,
+        foregroundColor: Colors.white,
+      ),
     );
+  }
+
+  String _formatTime(DateTime dateTime) {
+    final hour = dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final amPm = dateTime.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $amPm';
   }
 
   Color _getStatusColor(String status) {

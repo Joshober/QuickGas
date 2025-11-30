@@ -6,6 +6,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/providers/auth_provider.dart';
 import '../../../core/animations/page_transitions.dart';
 import '../../../features/map/location_picker_screen.dart';
+import '../../../features/payment/payment_screen.dart';
 
 class CreateOrderScreen extends ConsumerStatefulWidget {
   const CreateOrderScreen({super.key});
@@ -60,26 +61,91 @@ class _CreateOrderScreenState extends ConsumerState<CreateOrderScreen> {
     try {
       final authState = ref.read(authStateProvider);
       final firebaseService = ref.read(firebaseServiceProvider);
+      final backendService = ref.read(backendServiceProvider);
 
       if (authState.value == null) {
         throw Exception('User not authenticated');
       }
 
-      await firebaseService.createOrder(
-        customerId: authState.value!.uid,
-        location: _selectedLocation!,
-        address: _selectedAddress,
-        gasQuantity: double.parse(_gasQuantityController.text),
-        specialInstructions: _instructionsController.text.isEmpty
-            ? null
-            : _instructionsController.text,
-        paymentMethod: _selectedPaymentMethod,
-      );
+      final gasQuantity = double.parse(_gasQuantityController.text);
+      String? stripePaymentId;
+
+      // If Stripe payment method selected, process payment first
+      if (_selectedPaymentMethod == AppConstants.paymentMethodStripe) {
+        final orderTotal = AppConstants.calculateOrderTotal(gasQuantity);
+        
+        // Create order first to get order ID
+        final orderId = await firebaseService.createOrder(
+          customerId: authState.value!.uid,
+          location: _selectedLocation!,
+          address: _selectedAddress,
+          gasQuantity: gasQuantity,
+          specialInstructions: _instructionsController.text.isEmpty
+              ? null
+              : _instructionsController.text,
+          paymentMethod: _selectedPaymentMethod,
+          backendService: backendService,
+        );
+
+        // Navigate to payment screen
+        final paymentResult = await Navigator.of(context).push<Map<String, dynamic>>(
+          MaterialPageRoute(
+            builder: (context) => PaymentScreen(
+              amount: orderTotal,
+              orderId: orderId,
+            ),
+          ),
+        );
+
+        if (paymentResult == null || paymentResult['success'] != true) {
+          // Payment cancelled or failed - update order status
+          await firebaseService.updateOrderStatus(
+            orderId,
+            AppConstants.orderStatusCancelled,
+            backendService: backendService,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Payment cancelled. Order has been cancelled.'),
+                backgroundColor: AppTheme.warningColor,
+              ),
+            );
+          }
+          return;
+        }
+
+        stripePaymentId = paymentResult['paymentIntentId'] as String?;
+
+        // Update order with payment ID and mark as paid
+        await firebaseService.updateOrderPayment(
+          orderId,
+          stripePaymentId: stripePaymentId,
+          paymentStatus: AppConstants.paymentStatusPaid,
+        );
+      } else {
+        // Cash on delivery - create order without payment
+        await firebaseService.createOrder(
+          customerId: authState.value!.uid,
+          location: _selectedLocation!,
+          address: _selectedAddress,
+          gasQuantity: gasQuantity,
+          specialInstructions: _instructionsController.text.isEmpty
+              ? null
+              : _instructionsController.text,
+          paymentMethod: _selectedPaymentMethod,
+          backendService: backendService,
+        );
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order created successfully!'),
+          SnackBar(
+            content: Text(
+              _selectedPaymentMethod == AppConstants.paymentMethodStripe
+                  ? 'Order created and payment processed successfully!'
+                  : 'Order created successfully!',
+            ),
             backgroundColor: AppTheme.successColor,
           ),
         );

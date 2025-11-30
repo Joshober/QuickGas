@@ -38,11 +38,38 @@ class MapsService {
 
       if (placemarks.isNotEmpty) {
         final place = placemarks[0];
-        return '${place.street}, ${place.locality}, ${place.administrativeArea} ${place.postalCode}';
+        // Build address string, handling cases where street might be null (water, paths, etc.)
+        List<String> addressParts = [];
+        
+        if (place.street != null && place.street!.isNotEmpty) {
+          addressParts.add(place.street!);
+        }
+        if (place.name != null && place.name!.isNotEmpty && place.street == null) {
+          // Use name if no street (e.g., "Marina", "Park")
+          addressParts.add(place.name!);
+        }
+        if (place.locality != null && place.locality!.isNotEmpty) {
+          addressParts.add(place.locality!);
+        }
+        if (place.administrativeArea != null && place.administrativeArea!.isNotEmpty) {
+          addressParts.add(place.administrativeArea!);
+        }
+        if (place.postalCode != null && place.postalCode!.isNotEmpty) {
+          addressParts.add(place.postalCode!);
+        }
+        
+        if (addressParts.isEmpty) {
+          // If no address parts, create a description from coordinates
+          return 'Location: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
+        }
+        
+        return addressParts.join(', ');
       }
-      return 'Unknown location';
+      // If no placemarks, return coordinates as fallback
+      return 'Location: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
     } catch (e) {
-      throw Exception('Failed to get address: $e');
+      // If geocoding fails (e.g., water location), return coordinates
+      return 'Location: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
     }
   }
 

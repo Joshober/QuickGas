@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 class BackendService {
@@ -80,6 +81,53 @@ class BackendService {
       };
     } catch (e) {
       throw Exception('Failed to optimize route: $e');
+    }
+  }
+
+  Future<String> uploadImage({
+    required String orderId,
+    required String imageType,
+    required String filePath,
+  }) async {
+    if (_baseUrl == null) {
+      throw Exception('Backend URL not configured');
+    }
+
+    try {
+      final formData = FormData.fromMap({
+        'orderId': orderId,
+        'imageType': imageType,
+        'file': await MultipartFile.fromFile(filePath),
+      });
+
+      final response = await _dio.post(
+        '/api/images/upload',
+        data: formData,
+        options: Options(
+          headers: {'Content-Type': 'multipart/form-data'},
+        ),
+      );
+
+      return response.data['url'] as String;
+    } catch (e) {
+      throw Exception('Failed to upload image: $e');
+    }
+  }
+
+  Future<Uint8List> getImage(String imageId) async {
+    if (_baseUrl == null) {
+      throw Exception('Backend URL not configured');
+    }
+
+    try {
+      final response = await _dio.get(
+        '/api/images/$imageId',
+        options: Options(responseType: ResponseType.bytes),
+      );
+
+      return response.data as Uint8List;
+    } catch (e) {
+      throw Exception('Failed to get image: $e');
     }
   }
 }

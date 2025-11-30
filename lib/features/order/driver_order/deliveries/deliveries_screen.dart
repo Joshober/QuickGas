@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/providers/auth_provider.dart';
 import '../../../../core/animations/page_transitions.dart';
 import '../../../../shared/models/order_model.dart';
 import 'delivery_detail_screen.dart';
+import 'delivery_route_screen.dart';
 
 class DeliveriesScreen extends ConsumerWidget {
   const DeliveriesScreen({super.key});
@@ -35,10 +37,24 @@ class DeliveriesScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Active Deliveries'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-
+          StreamBuilder<List<OrderModel>>(
+            stream: activeOrders,
+            builder: (context, snapshot) {
+              final orders = snapshot.data ?? [];
+              if (orders.length < 2) {
+                return const SizedBox.shrink();
+              }
+              return IconButton(
+                icon: const Icon(Icons.route),
+                tooltip: 'Create Optimized Route',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    PageTransitions.slideTransition(
+                      DeliveryRouteScreen(orders: orders),
+                    ),
+                  );
+                },
+              );
             },
           ),
         ],
@@ -79,6 +95,25 @@ class DeliveriesScreen extends ConsumerWidget {
                     style: Theme.of(
                       context,
                     ).textTheme.bodyMedium?.copyWith(color: Colors.grey[500]),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      // Navigate to routes screen to accept orders
+                      // Use GoRouter if available, otherwise fallback to named route
+                      final router = GoRouter.of(context);
+                      router.go('/driver/routes');
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Accept New Orders'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                    ),
                   ),
                 ],
               ),

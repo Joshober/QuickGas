@@ -9,15 +9,56 @@ import 'core/constants/api_keys.dart';
 import 'services/notification_service.dart';
 import 'services/payment_service.dart';
 import 'services/backend_service.dart';
-import 'services/traffic_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Load and cache Google Maps API key - this MUST happen before anything else
+  String? googleMapsKey;
   try {
     await dotenv.load(fileName: '.env');
+    debugPrint('dotenv loaded successfully');
+
+    // Get the key directly from dotenv and cache it immediately
+    googleMapsKey = dotenv.env['GOOGLE_MAPS_API_KEY']?.trim();
+    if (googleMapsKey != null && googleMapsKey.isNotEmpty) {
+      ApiKeys.setGoogleMapsApiKey(googleMapsKey);
+      debugPrint(
+        'Google Maps API key loaded and cached: ${googleMapsKey.substring(0, 10)}...',
+      );
+    } else {
+      debugPrint('Warning: GOOGLE_MAPS_API_KEY not found in .env file');
+    }
   } catch (e) {
     debugPrint('Warning: Could not load .env file: $e');
+  }
+
+  // If key still not loaded, try reading file directly
+  if (googleMapsKey == null || googleMapsKey.isEmpty) {
+    try {
+      final key = await ApiKeys.readGoogleMapsKeyFromFile();
+      if (key.isNotEmpty) {
+        ApiKeys.setGoogleMapsApiKey(key);
+        debugPrint(
+          'Google Maps API key loaded from file directly: ${key.substring(0, 10)}...',
+        );
+        googleMapsKey = key;
+      }
+    } catch (e) {
+      debugPrint('Could not read .env file directly: $e');
+    }
+  }
+
+  // Final verification
+  final finalKey = ApiKeys.googleMapsApiKey;
+  if (finalKey.isNotEmpty) {
+    debugPrint(
+      '✓ Google Maps API key verified and ready: ${finalKey.substring(0, 10)}...',
+    );
+  } else {
+    debugPrint(
+      '✗ ERROR: Google Maps API key is still empty - route optimization will not work',
+    );
   }
 
   await Firebase.initializeApp();
@@ -38,11 +79,7 @@ void main() async {
     backendService.setBaseUrl(backendUrl);
   }
 
-  final openRouteServiceApiKey = ApiKeys.openRouteServiceApiKey;
-  if (openRouteServiceApiKey.isNotEmpty) {
-    final trafficService = TrafficService();
-    trafficService.setApiKey(openRouteServiceApiKey);
-  }
+  // TrafficService now uses only Google Maps API - no OpenRouteService needed
 
   final stripePublishableKey = ApiKeys.stripePublishableKey;
   if (stripePublishableKey.isNotEmpty) {

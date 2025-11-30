@@ -45,10 +45,18 @@ class PaymentService {
     required PaymentMethodParams params,
   }) async {
     try {
-      throw UnimplementedError(
-        'Payment confirmation requires proper Stripe SDK setup. '
-        'Refer to flutter_stripe documentation for your SDK version.',
+      // Confirm payment using Stripe SDK
+      await Stripe.instance.confirmPayment(
+        paymentIntentClientSecret: paymentIntentClientSecret,
+        data: params,
       );
+
+      // Retrieve payment intent to get status
+      final paymentIntent = await Stripe.instance.retrievePaymentIntent(
+        paymentIntentClientSecret,
+      );
+
+      return paymentIntent;
     } on StripeException catch (e) {
       throw Exception('Payment failed: ${e.error.message}');
     } catch (e) {

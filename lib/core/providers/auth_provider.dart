@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/firebase_service.dart';
 import '../../services/traffic_service.dart';
+import '../../services/backend_service.dart';
 import '../../shared/models/user_model.dart';
 import '../constants/api_keys.dart';
 
@@ -10,13 +11,17 @@ final firebaseServiceProvider = Provider<FirebaseService>((ref) {
 });
 
 final trafficServiceProvider = Provider<TrafficService>((ref) {
-  final service = TrafficService();
+  return TrafficService();
+});
 
-  final apiKey = ApiKeys.openRouteServiceApiKey;
-  if (apiKey.isNotEmpty) {
-    service.setApiKey(apiKey);
+final backendServiceProvider = Provider<BackendService?>((ref) {
+  final backendUrl = ApiKeys.backendUrl;
+  if (backendUrl.isNotEmpty && backendUrl != 'YOUR_BACKEND_URL_HERE') {
+    final service = BackendService();
+    service.setBaseUrl(backendUrl);
+    return service;
   }
-  return service;
+  return null;
 });
 
 final authStateProvider = StreamProvider<User?>((ref) {
@@ -75,7 +80,6 @@ class CurrentRoleNotifier extends StateNotifier<String?> {
   final Ref _ref;
 
   CurrentRoleNotifier(this._ref) : super(null) {
-
     final defaultRole = _ref.watch(userRoleProvider);
     _ref.listen(userRoleProvider, (previous, next) {
       if (next != null && state == null) {

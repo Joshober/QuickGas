@@ -15,6 +15,9 @@ class OrderModel {
   final String? stripePaymentId;
   final String? deliveryPhotoUrl;
   final DateTime? deliveryVerifiedAt;
+  final GeoPoint? driverLocation; // Real-time driver location
+  final double? estimatedTimeMinutes; // ETA in minutes
+  final DateTime? estimatedArrivalTime; // Calculated arrival time
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -32,6 +35,9 @@ class OrderModel {
     this.stripePaymentId,
     this.deliveryPhotoUrl,
     this.deliveryVerifiedAt,
+    this.driverLocation,
+    this.estimatedTimeMinutes,
+    this.estimatedArrivalTime,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -52,6 +58,9 @@ class OrderModel {
       stripePaymentId: data['stripePaymentId'],
       deliveryPhotoUrl: data['deliveryPhotoUrl'],
       deliveryVerifiedAt: (data['deliveryVerifiedAt'] as Timestamp?)?.toDate(),
+      driverLocation: data['driverLocation'] as GeoPoint?,
+      estimatedTimeMinutes: (data['estimatedTimeMinutes'] as num?)?.toDouble(),
+      estimatedArrivalTime: (data['estimatedArrivalTime'] as Timestamp?)?.toDate(),
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
@@ -73,6 +82,11 @@ class OrderModel {
       'deliveryVerifiedAt': deliveryVerifiedAt != null
           ? Timestamp.fromDate(deliveryVerifiedAt!)
           : null,
+      'driverLocation': driverLocation,
+      'estimatedTimeMinutes': estimatedTimeMinutes,
+      'estimatedArrivalTime': estimatedArrivalTime != null
+          ? Timestamp.fromDate(estimatedArrivalTime!)
+          : null,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };
@@ -92,6 +106,9 @@ class OrderModel {
     String? stripePaymentId,
     String? deliveryPhotoUrl,
     DateTime? deliveryVerifiedAt,
+    GeoPoint? driverLocation,
+    double? estimatedTimeMinutes,
+    DateTime? estimatedArrivalTime,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -109,6 +126,9 @@ class OrderModel {
       stripePaymentId: stripePaymentId ?? this.stripePaymentId,
       deliveryPhotoUrl: deliveryPhotoUrl ?? this.deliveryPhotoUrl,
       deliveryVerifiedAt: deliveryVerifiedAt ?? this.deliveryVerifiedAt,
+      driverLocation: driverLocation ?? this.driverLocation,
+      estimatedTimeMinutes: estimatedTimeMinutes ?? this.estimatedTimeMinutes,
+      estimatedArrivalTime: estimatedArrivalTime ?? this.estimatedArrivalTime,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

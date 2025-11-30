@@ -4,6 +4,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/providers/auth_provider.dart';
 import '../../../shared/models/order_model.dart';
+import '../../../shared/widgets/base64_image_widget.dart';
 import 'package:intl/intl.dart';
 
 class OrderDetailScreen extends ConsumerWidget {
@@ -123,8 +124,8 @@ class OrderDetailScreen extends ConsumerWidget {
                   const SizedBox(height: 8),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      order.deliveryPhotoUrl!,
+                    child: Base64ImageWidget(
+                      imageString: order.deliveryPhotoUrl,
                       height: 200,
                       width: double.infinity,
                       fit: BoxFit.cover,

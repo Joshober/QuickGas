@@ -38,4 +38,12 @@ class AppConstants {
 
   static const int maxImageSize = 5 * 1024 * 1024;
   static const double imageCompressionQuality = 0.8;
+
+  // Pricing
+  static const double pricePerGallon = 3.50; // Default price per gallon in USD
+  static const double deliveryFee = 5.00; // Default delivery fee in USD
+
+  static double calculateOrderTotal(double gasQuantity) {
+    return (gasQuantity * pricePerGallon) + deliveryFee;
+  }
 }

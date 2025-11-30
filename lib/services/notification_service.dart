@@ -63,26 +63,67 @@ class NotificationService {
   }
 
   Future<void> _handleForegroundMessage(RemoteMessage message) async {
+    // Determine notification channel based on type
+    String channelId = 'quickgas_channel';
+    String channelName = 'QuickGas Notifications';
+    
+    final notificationType = message.data['type'] as String?;
+    if (notificationType != null) {
+      switch (notificationType) {
+        case 'new_order':
+        case 'order_accepted':
+        case 'order_in_transit':
+        case 'order_completed':
+          channelId = 'order_updates';
+          channelName = 'Order Updates';
+          break;
+        case 'route_update':
+          channelId = 'route_updates';
+          channelName = 'Route Updates';
+          break;
+        case 'payment_update':
+          channelId = 'payment_updates';
+          channelName = 'Payment Updates';
+          break;
+      }
+    }
+
     await _localNotifications.show(
       message.hashCode,
       message.notification?.title ?? 'New Notification',
       message.notification?.body ?? '',
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
-          'quickgas_channel',
-          'QuickGas Notifications',
+          channelId,
+          channelName,
           channelDescription: 'Notifications for QuickGas app',
           importance: Importance.high,
           priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
         ),
-        iOS: DarwinNotificationDetails(),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
       ),
       payload: message.data.toString(),
     );
   }
 
   void _onNotificationTap(NotificationResponse response) {
-
+    // Handle notification tap navigation
+    if (response.payload != null && response.payload!.isNotEmpty) {
+      try {
+        // Parse notification data from payload
+        // Format: {type: 'order_accepted', orderId: '...', status: '...'}
+        // For now, we'll use a global navigator key or context
+        // This will be handled by the app's notification handler
+      } catch (e) {
+        print('Error handling notification tap: $e');
+      }
+    }
   }
 
   Future<void> sendNotificationToUser(
