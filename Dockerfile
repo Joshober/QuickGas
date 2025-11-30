@@ -14,15 +14,21 @@ RUN flutter pub get
 COPY . .
 
 # Create .env file from Railway environment variables
-# Railway provides environment variables during build
-# Note: If .env already exists, this will append to it
-RUN chmod +x scripts/create-env.sh 2>/dev/null || true && \
-    touch .env && \
-    (if [ -n "$GOOGLE_MAPS_API_KEY" ]; then echo "GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY" >> .env; fi) && \
-    (if [ -n "$STRIPE_PUBLISHABLE_KEY" ]; then echo "STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY" >> .env; fi) && \
-    (if [ -n "$BACKEND_URL" ]; then echo "BACKEND_URL=$BACKEND_URL" >> .env; fi) && \
-    (if [ -n "$OPENROUTESERVICE_API_KEY" ]; then echo "OPENROUTESERVICE_API_KEY=$OPENROUTESERVICE_API_KEY" >> .env; fi) && \
-    echo "Environment variables configured for build"
+# Railway makes environment variables available during build
+# Note: Use ARG to make them available in the build context
+ARG GOOGLE_MAPS_API_KEY
+ARG STRIPE_PUBLISHABLE_KEY
+ARG BACKEND_URL
+ARG OPENROUTESERVICE_API_KEY
+
+RUN touch .env && \
+    echo "Creating .env file from Railway environment variables..." && \
+    ([ -n "$GOOGLE_MAPS_API_KEY" ] && echo "GOOGLE_MAPS_API_KEY=$GOOGLE_MAPS_API_KEY" >> .env || true) && \
+    ([ -n "$STRIPE_PUBLISHABLE_KEY" ] && echo "STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY" >> .env || true) && \
+    ([ -n "$BACKEND_URL" ] && echo "BACKEND_URL=$BACKEND_URL" >> .env || true) && \
+    ([ -n "$OPENROUTESERVICE_API_KEY" ] && echo "OPENROUTESERVICE_API_KEY=$OPENROUTESERVICE_API_KEY" >> .env || true) && \
+    echo "Environment variables configured for build" && \
+    (cat .env || echo "No environment variables found")
 
 # Build Flutter web app with proper base href for root deployment
 # The --base-href / will replace $FLUTTER_BASE_HREF in index.html
