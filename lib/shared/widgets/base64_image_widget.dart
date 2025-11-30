@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:typed_data';
-import 'dart:convert';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../services/image_service.dart';
 
@@ -48,7 +46,7 @@ class Base64ImageWidget extends StatelessWidget {
     } else if (imageString!.startsWith('http')) {
       // It's a URL - use cached network image for better performance
       return CachedNetworkImage(
-        imageUrl: imageString,
+        imageUrl: imageString!,
         width: width,
         height: height,
         fit: fit,
