@@ -51,19 +51,17 @@ public class FirebaseConfig {
     
     @Bean
     @ConditionalOnProperty(name = "firebase.enabled", havingValue = "true", matchIfMissing = false)
-    @org.springframework.boot.autoconfigure.condition.ConditionalOnBean(FirebaseApp.class)
     public FirebaseMessaging firebaseMessaging() {
+        if (FirebaseApp.getApps().isEmpty()) {
+            log.warn("Firebase not initialized, FirebaseMessaging bean will not be created");
+            // Throw exception to prevent bean creation - Spring will handle this gracefully
+            throw new IllegalStateException("Firebase not initialized - FirebaseMessaging bean cannot be created");
+        }
         try {
-            if (FirebaseApp.getApps().isEmpty()) {
-                log.warn("Firebase not initialized, FirebaseMessaging bean will not be created");
-                // Don't create the bean if Firebase isn't initialized
-                return null;
-            }
             return FirebaseMessaging.getInstance();
         } catch (Exception e) {
             log.error("Failed to create FirebaseMessaging bean: {}", e.getMessage());
-            // Return null instead of throwing - bean won't be created
-            return null;
+            throw new IllegalStateException("Failed to create FirebaseMessaging", e);
         }
     }
 }
