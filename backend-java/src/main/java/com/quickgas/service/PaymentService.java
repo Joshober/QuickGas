@@ -7,7 +7,6 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.PaymentIntentCancelParams;
-import com.stripe.param.PaymentIntentRetrieveParams;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -60,11 +59,7 @@ public class PaymentService {
     }
     
     public Map<String, Object> confirmPayment(String paymentIntentId) throws StripeException {
-        PaymentIntent paymentIntent = PaymentIntent.retrieve(
-            PaymentIntentRetrieveParams.builder()
-                .build(),
-            paymentIntentId
-        );
+        PaymentIntent paymentIntent = PaymentIntent.retrieve(paymentIntentId);
         
         Map<String, Object> response = new HashMap<>();
         response.put("status", paymentIntent.getStatus());
@@ -74,9 +69,9 @@ public class PaymentService {
     }
     
     public Map<String, Object> cancelPayment(String paymentIntentId) throws StripeException {
-        PaymentIntent paymentIntent = PaymentIntent.cancel(
-            PaymentIntentCancelParams.builder().build(),
-            paymentIntentId
+        PaymentIntent paymentIntent = PaymentIntent.retrieve(paymentIntentId);
+        paymentIntent = paymentIntent.cancel(
+            PaymentIntentCancelParams.builder().build()
         );
         
         Map<String, Object> response = new HashMap<>();
