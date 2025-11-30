@@ -1,0 +1,59 @@
+# Build outputs
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+pubspec.lock
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Documentation
+*.md
+README.md
+LICENSE
+
+# Test files
+test/
+*.test.dart
+
+# Platform specific
+android/
+ios/
+linux/
+macos/
+windows/
+
+# Backend (not needed for frontend build)
+backend/
+backend-java/
+
+# Scripts
+scripts/
+make_config.*
+
+# Other
+*.log
+coverage/
+
