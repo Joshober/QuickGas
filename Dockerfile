@@ -13,8 +13,9 @@ RUN flutter pub get
 # Copy the rest of the application
 COPY . .
 
-# Note: .env file will be created at runtime from Railway environment variables
-# This allows Railway to inject environment variables without build args
+# Create placeholder .env file for Flutter build (required by pubspec.yaml assets)
+# The actual .env will be generated at runtime from Railway environment variables
+RUN touch .env && echo "# Placeholder .env file - will be replaced at runtime" > .env
 
 # Build Flutter web app with proper base href for root deployment
 # The --base-href / will replace $FLUTTER_BASE_HREF in index.html
