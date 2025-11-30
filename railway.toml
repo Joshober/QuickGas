@@ -1,9 +1,12 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+# Railway will automatically make environment variables available during build
 
 [deploy]
 startCommand = "nginx -g 'daemon off;'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
+healthcheckPath = "/"
+healthcheckTimeout = 100
 
