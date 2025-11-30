@@ -1,4 +1,4 @@
-# Build outputs
+# Build outputs (but keep pubspec.lock for Docker build)
 build/
 .dart_tool/
 .flutter-plugins
@@ -6,7 +6,6 @@ build/
 .packages
 .pub-cache/
 .pub/
-pubspec.lock
 
 # IDE
 .idea/
@@ -24,8 +23,7 @@ Thumbs.db
 .git/
 .gitignore
 
-# Environment
-.env
+# Environment (but .env is needed for web build assets)
 .env.local
 .env.*.local
 
