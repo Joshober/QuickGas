@@ -1,15 +1,22 @@
 #!/bin/sh
 # Docker entrypoint script that generates .env and starts nginx
 
-set -e
-
 # Generate .env file from environment variables
 echo "Generating .env file from Railway environment variables..."
-/scripts/generate-config.sh
+if /scripts/generate-config.sh; then
+    echo "✓ .env file generated successfully"
+else
+    echo "⚠ Warning: .env generation had issues, continuing anyway..."
+fi
 
 # Test nginx configuration
 echo "Testing nginx configuration..."
-nginx -t
+if nginx -t; then
+    echo "✓ Nginx configuration is valid"
+else
+    echo "✗ Nginx configuration test failed!"
+    exit 1
+fi
 
 # Start nginx in foreground
 echo "Starting nginx..."
