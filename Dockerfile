@@ -24,8 +24,8 @@ RUN flutter build web --release --base-href /
 # Runtime stage - use nginx to serve the built web app
 FROM nginx:alpine
 
-# Install bash for scripts
-RUN apk add --no-cache bash
+# Install bash and gettext (for envsubst) for scripts
+RUN apk add --no-cache bash gettext
 
 # Copy built web app from build stage
 COPY --from=build /app/build/web /usr/share/nginx/html
@@ -33,7 +33,7 @@ COPY --from=build /app/build/web /usr/share/nginx/html
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy runtime scripts (ensure scripts directory exists)
+# Copy runtime scripts
 RUN mkdir -p /scripts
 COPY scripts/generate-config.sh /scripts/generate-config.sh
 COPY scripts/docker-entrypoint.sh /scripts/docker-entrypoint.sh
@@ -42,10 +42,6 @@ RUN chmod +x /scripts/*.sh
 # Expose port 80
 EXPOSE 80
 
-# Health check
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
-
 # Use entrypoint script to generate config and start nginx
-CMD ["/scripts/docker-entrypoint.sh"]
+ENTRYPOINT ["/scripts/docker-entrypoint.sh"]
 
