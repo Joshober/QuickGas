@@ -6,6 +6,7 @@ import com.google.firebase.FirebaseOptions;
 import com.google.firebase.messaging.FirebaseMessaging;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -49,11 +50,18 @@ public class FirebaseConfig {
     }
     
     @Bean
+    @ConditionalOnProperty(name = "firebase.enabled", havingValue = "true", matchIfMissing = false)
     public FirebaseMessaging firebaseMessaging() {
-        if (FirebaseApp.getApps().isEmpty()) {
+        try {
+            if (FirebaseApp.getApps().isEmpty()) {
+                log.warn("Firebase not initialized, FirebaseMessaging bean will not be created");
+                return null;
+            }
+            return FirebaseMessaging.getInstance();
+        } catch (Exception e) {
+            log.error("Failed to create FirebaseMessaging bean: {}", e.getMessage());
             return null;
         }
-        return FirebaseMessaging.getInstance();
     }
 }
 

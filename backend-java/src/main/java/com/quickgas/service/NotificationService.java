@@ -6,19 +6,24 @@ import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.MulticastMessage;
 import com.quickgas.dto.BatchNotificationRequest;
 import com.quickgas.dto.NotificationRequest;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class NotificationService {
     
     private final FirebaseMessaging firebaseMessaging;
+    
+    @Autowired(required = false)
+    public NotificationService(FirebaseMessaging firebaseMessaging) {
+        this.firebaseMessaging = firebaseMessaging;
+    }
     
     public boolean isFirebaseEnabled() {
         return firebaseMessaging != null;
