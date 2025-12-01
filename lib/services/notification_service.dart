@@ -4,6 +4,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_service.dart';
 
+// Export background handler for registration in main.dart
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await _firebaseMessagingBackgroundHandler(message);
+}
+
 class NotificationService {
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
@@ -11,8 +17,12 @@ class NotificationService {
   final FirebaseService _firebaseService = FirebaseService();
 
   Future<void> initialize() async {
+    print('=== Initializing Notification Service ===');
+    
     // Always initialize notification channels first (needed for Android)
+    print('Creating notification channels...');
     await createNotificationChannels();
+    print('Notification channels creation completed');
     
     // Initialize local notifications (needed to show notifications)
     const AndroidInitializationSettings androidSettings =
@@ -25,18 +35,19 @@ class NotificationService {
       iOS: iosSettings,
     );
 
+    print('Initializing local notifications...');
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: _onNotificationTap,
     );
+    print('Local notifications initialized');
 
     // Set up FCM message handlers (these work regardless of permission)
+    print('Setting up FCM message handlers...');
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+    print('FCM foreground handler registered');
 
-    // Handle background messages (app in background)
-    FirebaseMessaging.onBackgroundMessage(
-      _firebaseMessagingBackgroundHandler,
-    );
+    // Note: Background message handler is registered in main.dart before Firebase.initializeApp()
 
     // Handle notifications when app is opened from terminated state
     final initialMessage = await _messaging.getInitialMessage();
@@ -457,11 +468,21 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
   }
   
+  // Extract title and body from notification or data payload
+  final title = message.notification?.title ?? 
+                message.data['title'] as String? ?? 
+                'QuickGas Notification';
+  final body = message.notification?.body ?? 
+               message.data['body'] as String? ?? 
+               'You have a new update';
+
+  print('Background notification received - Title: $title, Body: $body, Type: $notificationType');
+
   // Show the notification
   await localNotifications.show(
     message.hashCode,
-    message.notification?.title ?? 'New Notification',
-    message.notification?.body ?? '',
+    title,
+    body,
     NotificationDetails(
       android: AndroidNotificationDetails(
         channelId,
@@ -472,6 +493,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         playSound: true,
         enableVibration: true,
         showWhen: true,
+        icon: '@mipmap/ic_launcher',
       ),
       iOS: const DarwinNotificationDetails(
         presentAlert: true,
@@ -481,4 +503,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     ),
     payload: message.data.toString(),
   );
+  
+  print('Background notification displayed successfully');
 }

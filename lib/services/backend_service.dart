@@ -11,8 +11,9 @@ class BackendService {
     _dio.options.baseUrl = url;
     _dio.options.headers['Content-Type'] = 'application/json';
     // Increased timeouts for better reliability, especially on first connection
-    _dio.options.connectTimeout = const Duration(seconds: 10);
-    _dio.options.receiveTimeout = const Duration(seconds: 10);
+    // Notification requests can take time, so we use longer timeouts
+    _dio.options.connectTimeout = const Duration(seconds: 15);
+    _dio.options.receiveTimeout = const Duration(seconds: 30); // Longer timeout for notification requests
   }
 
   /// Check if backend is available by hitting health endpoint
@@ -23,8 +24,14 @@ class BackendService {
     }
 
     try {
-      final response = await _dio.get(
-        '/health',
+      // Use a shorter timeout specifically for health checks
+      // Create a new Dio instance with shorter timeout for health check
+      final healthCheckDio = Dio(_dio.options);
+      healthCheckDio.options.receiveTimeout = const Duration(seconds: 5);
+      healthCheckDio.options.connectTimeout = const Duration(seconds: 5);
+      
+      final response = await healthCheckDio.get(
+        '${_baseUrl}/health',
         options: Options(
           validateStatus: (status) => status != null && status < 500,
           followRedirects: true,
@@ -34,15 +41,26 @@ class BackendService {
       if (!_isAvailable) {
         // Log for debugging
         print('Backend health check failed: status=${response.statusCode}');
+      } else {
+        print('✅ Backend health check passed');
       }
       return _isAvailable;
     } on DioException catch (e) {
       _isAvailable = false;
       // Log connection errors for debugging, but don't spam for expected 502 errors
       final statusCode = e.response?.statusCode;
+      final errorType = e.type;
+      
       if (statusCode == 502) {
         // 502 is expected if backend isn't running - just set availability, don't log repeatedly
         // The app will work in Firebase-only mode
+      } else if (errorType == DioExceptionType.receiveTimeout || 
+                 errorType == DioExceptionType.connectionTimeout) {
+        // Timeout errors - backend might be slow but still functional
+        print('⚠️ Backend health check timed out - backend may be slow but still functional');
+        print('Will attempt to send notifications anyway (backend might respond to actual requests)');
+        // Don't mark as unavailable on timeout - let actual requests try
+        return false; // But return false so we know health check failed
       } else {
         // Log other errors for debugging
         print('Backend connection error: ${e.type} - ${e.message}');
@@ -328,12 +346,16 @@ class BackendService {
     required String body,
     Map<String, dynamic>? data,
   }) async {
-    if (_baseUrl == null || !_isAvailable) {
+    if (_baseUrl == null) {
+      print('Backend base URL is null, cannot send notification');
       return false;
     }
 
+    // Don't check isAvailable here - try to send anyway
+    // The availability might have changed, or we want to retry
+    // Use longer timeout for actual notification requests (they might take time)
     try {
-      await _dio.post(
+      final response = await _dio.post(
         '/api/notifications/send',
         data: {
           'fcmToken': fcmToken,
@@ -341,10 +363,53 @@ class BackendService {
           'body': body,
           'data': data ?? {},
         },
+        options: Options(
+          validateStatus: (status) => status != null && status < 500,
+        ),
       );
-      return true;
+      
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        _isAvailable = true; // Mark as available on success
+        print('✅ Notification sent successfully via backend');
+        return true;
+      } else {
+        print('⚠️ Backend notification failed - HTTP ${response.statusCode}');
+        // Don't mark as unavailable for 503 (service temporarily unavailable)
+        // This might be due to Firebase Admin not being initialized, but backend is still up
+        if (response.statusCode == 503) {
+          print('Backend returned 503 - likely Firebase Admin not initialized, but backend is running');
+          // Don't mark backend as unavailable for 503 - it's a service configuration issue
+        } else {
+          _isAvailable = false;
+        }
+        return false;
+      }
+    } on DioException catch (e) {
+      // Handle 503 separately - it means backend is up but service unavailable
+      if (e.response?.statusCode == 503) {
+        print('⚠️ Backend notification service unavailable (503) - Firebase Admin may not be initialized');
+        print('This is expected if Firebase Admin SDK is not configured in backend');
+        // Don't mark backend as unavailable - it's running, just the notification service isn't configured
+        return false;
+      }
+      
+      // Handle timeouts - backend might be slow, Cloud Function will handle notification
+      if (e.type == DioExceptionType.receiveTimeout || 
+          e.type == DioExceptionType.connectionTimeout) {
+        print('⚠️ Backend notification timed out - Cloud Function will send notification instead');
+        _isAvailable = false; // Mark as unavailable but Cloud Function will handle it
+        return false;
+      }
+      
+      _isAvailable = false; // Mark as unavailable on other errors
+      print('Backend notification error: ${e.type} - ${e.message}');
+      if (e.response != null) {
+        print('Response status: ${e.response?.statusCode}');
+      }
+      return false;
     } catch (e) {
-      _isAvailable = false; // Mark as unavailable on error
+      _isAvailable = false;
+      print('Backend notification unexpected error: $e');
       return false;
     }
   }

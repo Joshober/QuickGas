@@ -18,6 +18,7 @@ class OrderModel {
   final GeoPoint? driverLocation; // Real-time driver location
   final double? estimatedTimeMinutes; // ETA in minutes
   final DateTime? estimatedArrivalTime; // Calculated arrival time
+  final String? customerFcmToken; // Customer's FCM token for notifications
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -38,6 +39,7 @@ class OrderModel {
     this.driverLocation,
     this.estimatedTimeMinutes,
     this.estimatedArrivalTime,
+    this.customerFcmToken,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -61,6 +63,7 @@ class OrderModel {
       driverLocation: data['driverLocation'] as GeoPoint?,
       estimatedTimeMinutes: (data['estimatedTimeMinutes'] as num?)?.toDouble(),
       estimatedArrivalTime: (data['estimatedArrivalTime'] as Timestamp?)?.toDate(),
+      customerFcmToken: data['customerFcmToken'] as String?,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
@@ -87,6 +90,7 @@ class OrderModel {
       'estimatedArrivalTime': estimatedArrivalTime != null
           ? Timestamp.fromDate(estimatedArrivalTime!)
           : null,
+      'customerFcmToken': customerFcmToken,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };
@@ -109,6 +113,7 @@ class OrderModel {
     GeoPoint? driverLocation,
     double? estimatedTimeMinutes,
     DateTime? estimatedArrivalTime,
+    String? customerFcmToken,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -129,6 +134,7 @@ class OrderModel {
       driverLocation: driverLocation ?? this.driverLocation,
       estimatedTimeMinutes: estimatedTimeMinutes ?? this.estimatedTimeMinutes,
       estimatedArrivalTime: estimatedArrivalTime ?? this.estimatedArrivalTime,
+      customerFcmToken: customerFcmToken ?? this.customerFcmToken,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

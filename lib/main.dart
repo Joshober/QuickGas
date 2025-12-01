@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'core/constants/backend_constants.dart';
 import 'core/constants/api_keys.dart';
-import 'services/notification_service.dart';
+import 'services/notification_service.dart'
+    show NotificationService, firebaseMessagingBackgroundHandler;
 import 'services/payment_service.dart';
 import 'services/backend_service.dart';
 
@@ -61,6 +63,10 @@ void main() async {
       '✗ ERROR: Google Maps API key is still empty - route optimization will not work',
     );
   }
+
+  // Register background message handler BEFORE Firebase initialization
+  // This is required for background notifications to work when app is closed or in background
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   await Firebase.initializeApp();
 

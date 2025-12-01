@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is the owner
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Helper function to get user role (with error handling)
+    function getUserRole() {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return userDoc != null && userDoc.data != null ? userDoc.data.role : null;
+    }
+    
+    // Helper function to check if user is driver
+    function isDriver() {
+      let role = getUserRole();
+      return role == 'driver' || role == 'both';
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read and write their own profile
+      allow read, write: if isOwner(userId);
+      
+      // Drivers can read other users' profiles (for notifications, but limited fields)
+      // This allows drivers to get FCM tokens for notifications
+      allow read: if isAuthenticated() && 
+        (isOwner(userId) || isDriver());
+      
+      // Users can update their own FCM token
+      allow update: if isOwner(userId) && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken']);
+    }
+    
+    // Orders collection
+    match /orders/{orderId} {
+      // Customers can create their own orders
+      allow create: if isAuthenticated() && 
+        request.resource.data.customerId == request.auth.uid;
+      
+      // Customers can read their own orders
+      // Drivers can read orders they're assigned to or pending orders
+      allow read: if isAuthenticated() && 
+        (resource.data.customerId == request.auth.uid ||
+         resource.data.driverId == request.auth.uid ||
+         (resource.data.status == 'pending' && isDriver()));
+      
+      // Customers can update their own pending orders (e.g., cancel)
+      allow update: if isAuthenticated() && 
+        resource.data.customerId == request.auth.uid &&
+        resource.data.status == 'pending';
+      
+      // Drivers can update orders they're assigned to
+      allow update: if isAuthenticated() && 
+        (resource.data.driverId == request.auth.uid ||
+         (resource.data.status == 'pending' && resource.data.driverId == null && isDriver()));
+      
+      // Drivers can accept pending orders (set driverId and status)
+      allow update: if isAuthenticated() && 
+        resource.data.status == 'pending' &&
+        resource.data.driverId == null &&
+        isDriver() &&
+        request.resource.data.driverId == request.auth.uid;
+    }
+    
+    // Routes collection
+    match /routes/{routeId} {
+      // Drivers can create routes
+      allow create: if isAuthenticated() && 
+        isDriver() &&
+        request.resource.data.driverId == request.auth.uid;
+      
+      // Drivers can read their own routes
+      allow read: if isAuthenticated() && 
+        resource.data.driverId == request.auth.uid;
+      
+      // Drivers can update their own routes
+      allow update, delete: if isAuthenticated() && 
+        resource.data.driverId == request.auth.uid;
+    }
+    
+    // Pending notifications collection (for fallback when backend is unavailable)
+    match /pending_notifications/{notificationId} {
+      // Only allow writes from server/admin (this would typically be a Cloud Function)
+      // For now, allow authenticated users to create (will be processed by backend/Cloud Function)
+      allow create: if isAuthenticated();
+      allow read, update, delete: if false; // Only Cloud Functions should access these
+    }
+  }
+}
+

@@ -237,6 +237,13 @@ class FirebaseService {
         .update({'stripeAccountId': stripeAccountId});
   }
 
+  Future<void> updateEmailNotificationsEnabled(String userId, bool enabled) async {
+    await _firestore
+        .collection(AppConstants.usersCollection)
+        .doc(userId)
+        .update({'emailNotificationsEnabled': enabled});
+  }
+
   Future<String?> getUserStripeAccountId(String userId) async {
     final doc = await _firestore
         .collection(AppConstants.usersCollection)
@@ -259,6 +266,22 @@ class FirebaseService {
     required String paymentMethod,
     BackendService? backendService,
   }) async {
+    // Get customer's FCM token to store in order (for notifications)
+    String? customerFcmToken;
+    try {
+      final userDoc = await _firestore
+          .collection(AppConstants.usersCollection)
+          .doc(customerId)
+          .get();
+      if (userDoc.exists) {
+        customerFcmToken = userDoc.data()?['fcmToken'] as String?;
+        print('Retrieved customer FCM token for order creation: ${customerFcmToken != null ? "${customerFcmToken.substring(0, 30)}..." : "null"}');
+      }
+    } catch (e) {
+      print('Warning: Could not retrieve customer FCM token when creating order: $e');
+      // Continue without FCM token - notification will be skipped if needed
+    }
+
     final orderModel = OrderModel(
       id: '', // Will be set by Firestore
       customerId: customerId,
@@ -269,6 +292,7 @@ class FirebaseService {
       specialInstructions: specialInstructions,
       paymentMethod: paymentMethod,
       paymentStatus: AppConstants.paymentStatusPending,
+      customerFcmToken: customerFcmToken,
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
@@ -443,77 +467,192 @@ class FirebaseService {
   }
 
   Future<void> _notifyOrderStatusChange(
-    BackendService backendService,
+    BackendService? backendService,
     String orderId,
     String status,
   ) async {
     try {
+      print('Attempting to send notification for order $orderId with status $status');
+      
       final orderDoc = await _firestore
           .collection(AppConstants.ordersCollection)
           .doc(orderId)
           .get();
 
-      if (!orderDoc.exists) return;
+      if (!orderDoc.exists) {
+        print('Order $orderId not found, cannot send notification');
+        return;
+      }
 
       final orderData = orderDoc.data()!;
       final customerId = orderData['customerId'] as String?;
 
+      if (customerId == null || customerId.isEmpty) {
+        print('No customerId found for order $orderId, cannot send notification');
+        return;
+      }
+
       String title;
       String body;
-      String? recipientId;
       String notificationType;
 
       switch (status) {
         case AppConstants.orderStatusAccepted:
           title = 'Order Accepted';
           body = 'A driver has accepted your order';
-          recipientId = customerId;
           notificationType = 'order_accepted';
           break;
         case AppConstants.orderStatusInTransit:
           title = 'Order In Transit';
           body = 'Your order is on the way';
-          recipientId = customerId;
           notificationType = 'order_in_transit';
           break;
         case AppConstants.orderStatusCompleted:
           title = 'Order Completed';
           body = 'Your order has been delivered';
-          recipientId = customerId;
           notificationType = 'order_completed';
           break;
         default:
+          print('No notification needed for status: $status');
           return; // Don't send notification for other statuses
       }
 
-      if (recipientId != null) {
-        final userDoc = await _firestore
-            .collection(AppConstants.usersCollection)
-            .doc(recipientId)
-            .get();
+      // Get customer's FCM token from order document (avoids permission issues)
+      // The FCM token is stored in the order when it's created
+      String? fcmToken = orderData['customerFcmToken'] as String?;
+      
+      if (fcmToken == null || fcmToken.isEmpty) {
+        print('No FCM token found in order document for customer $customerId');
+        print('Note: FCM token should be stored in order when created. Trying to get from user document as fallback...');
+        
+        // Fallback: Try to get from user document (may fail due to permissions)
+        try {
+          final userDoc = await _firestore
+              .collection(AppConstants.usersCollection)
+              .doc(customerId)
+              .get();
 
-        if (userDoc.exists) {
-          final fcmToken = userDoc.data()?['fcmToken'] as String?;
-          if (fcmToken != null && fcmToken.isNotEmpty && backendService.isAvailable) {
-            final success = await backendService.sendNotification(
-              fcmToken: fcmToken,
-              title: title,
-              body: body,
-              data: {
-                'type': notificationType,
-                'orderId': orderId,
-                'status': status,
-              },
-            );
-            // If backend notification fails, we can still use Firebase Cloud Messaging directly
-            if (!success) {
-              print('Backend notification failed, app will use Firebase-only mode');
+          if (userDoc.exists) {
+            final fallbackToken = userDoc.data()?['fcmToken'] as String?;
+            if (fallbackToken != null && fallbackToken.isNotEmpty) {
+              print('Found FCM token in user document (fallback) - using it for notification');
+              fcmToken = fallbackToken;
+              // Update order document with FCM token for future use
+              try {
+                await _firestore
+                    .collection(AppConstants.ordersCollection)
+                    .doc(orderId)
+                    .update({'customerFcmToken': fallbackToken});
+                print('Updated order document with FCM token for future notifications');
+              } catch (e) {
+                print('Could not update order with FCM token: $e');
+              }
             }
           }
+        } catch (e) {
+          print('Fallback FCM token retrieval failed (permission denied expected): $e');
+        }
+        
+        if (fcmToken == null || fcmToken.isEmpty) {
+          print('Cannot send notification - no FCM token available');
+          return;
         }
       }
-    } catch (e) {
+
+      print('Found FCM token for user $customerId, attempting to send notification');
+      print('FCM Token (first 30 chars): ${fcmToken.substring(0, fcmToken.length > 30 ? 30 : fcmToken.length)}...');
+
+      // Try to send via backend - always attempt even if marked unavailable
+      // (availability might have changed, or we want to retry)
+      bool notificationSent = false;
+      
+      if (backendService != null) {
+        print('Backend service exists, checking availability...');
+        // Re-check availability if marked as unavailable (might have recovered)
+        // But don't block on slow health checks - try sending notification anyway
+        if (!backendService.isAvailable) {
+          print('Backend marked as unavailable, re-checking availability...');
+          // Check availability but don't wait too long
+          bool recheckResult = false;
+          try {
+            recheckResult = await backendService.checkAvailability().timeout(
+              const Duration(seconds: 6),
+            );
+          } catch (e) {
+            print('⚠️ Backend availability check timed out or failed - will attempt notification anyway');
+            recheckResult = false;
+          }
+          print('Backend availability re-check result: $recheckResult');
+        } else {
+          print('Backend is marked as available');
+        }
+        
+        // Try to send notification even if health check failed
+        // The backend might be slow but still functional
+        // Always attempt to send - don't block on slow health checks
+        print('=== ATTEMPTING TO SEND NOTIFICATION VIA BACKEND ===');
+        print('Title: $title');
+        print('Body: $body');
+        print('Type: $notificationType');
+        print('OrderId: $orderId');
+        
+        try {
+          notificationSent = await backendService.sendNotification(
+            fcmToken: fcmToken,
+            title: title,
+            body: body,
+            data: {
+              'type': notificationType,
+              'orderId': orderId,
+              'status': status,
+            },
+          );
+          
+          if (notificationSent) {
+            print('✅ SUCCESS: Notification sent successfully via backend');
+          } else {
+            print('❌ FAILED: Backend notification returned false - backend may have become unavailable');
+          }
+        } catch (e, stackTrace) {
+          print('❌ ERROR: Exception sending notification via backend: $e');
+          print('Stack trace: $stackTrace');
+          // Mark backend as unavailable on error (but don't block future attempts)
+          backendService.checkAvailability().catchError((err) {
+            print('Error checking backend availability: $err');
+            return false;
+          });
+        }
+      } else {
+        print('⚠️ Backend service is null - cannot send notification via backend');
+      }
+
+      // If backend failed or is not available, store notification in Firestore
+      // Cloud Function will automatically process it and send via Firebase
+      if (!notificationSent) {
+        print('Storing notification in Firestore for Cloud Function processing');
+        try {
+          await _firestore
+              .collection('pending_notifications')
+              .add({
+            'fcmToken': fcmToken,
+            'title': title,
+            'body': body,
+            'data': {
+              'type': notificationType,
+              'orderId': orderId,
+              'status': status,
+            },
+            'createdAt': Timestamp.fromDate(DateTime.now()),
+            'attempts': 0,
+          });
+          print('✅ Notification stored in Firestore - Cloud Function will send it automatically');
+        } catch (e) {
+          print('Error storing notification in Firestore: $e');
+        }
+      }
+    } catch (e, stackTrace) {
       print('Error sending status notification: $e');
+      print('Stack trace: $stackTrace');
     }
   }
 
@@ -556,14 +695,22 @@ class FirebaseService {
       });
     });
 
-    // Notify customer that order was accepted
+    // Notify customer that order was accepted (always attempt, even if backend is null)
+    print('=== NOTIFICATION: Order $orderId accepted by driver $driverId ===');
+    print('Backend service: ${backendService != null ? "available" : "null"}');
     if (backendService != null) {
-      _notifyOrderStatusChange(
-        backendService,
-        orderId,
-        AppConstants.orderStatusAccepted,
-      ).catchError((e) => print('Failed to notify customer: $e'));
+      print('Backend isAvailable: ${backendService.isAvailable}');
     }
+    _notifyOrderStatusChange(
+      backendService,
+      orderId,
+      AppConstants.orderStatusAccepted,
+    ).then((_) {
+      print('Notification process completed for order $orderId');
+    }).catchError((e, stackTrace) {
+      print('ERROR: Failed to notify customer for order $orderId: $e');
+      print('Stack trace: $stackTrace');
+    });
   }
 
   Future<void> updateOrderWithDeliveryPhoto(
@@ -599,49 +746,62 @@ class FirebaseService {
           'updatedAt': Timestamp.fromDate(DateTime.now()),
         });
 
-    // Notify customer that delivery is completed
+    // Notify customer that delivery is completed (always attempt, even if backend is null)
+    print('=== NOTIFICATION: Order $orderId completed by driver $driverId ===');
+    print('Backend service: ${backendService != null ? "available" : "null"}');
     if (backendService != null) {
-      _notifyOrderStatusChange(
-        backendService,
-        orderId,
-        AppConstants.orderStatusCompleted,
-      ).catchError((e) => print('Failed to notify customer: $e'));
+      print('Backend isAvailable: ${backendService.isAvailable}');
+    }
+    _notifyOrderStatusChange(
+      backendService,
+      orderId,
+      AppConstants.orderStatusCompleted,
+    ).then((_) {
+      print('Notification process completed for order $orderId');
+    }).catchError((e, stackTrace) {
+      print('ERROR: Failed to notify customer for order $orderId: $e');
+      print('Stack trace: $stackTrace');
+    });
       
-      // Create driver payment (80% of order total) when order is completed
-      if (driverId != null && driverId.isNotEmpty) {
-        // Calculate order total (gas quantity * price per gallon + delivery fee)
-        final orderTotal = (gasQuantity * AppConstants.pricePerGallon) + AppConstants.deliveryFee;
-        final driverAmount = orderTotal * 0.8;
+    // Create driver payment (80% of order total) when order is completed
+    if (backendService != null && driverId != null && driverId.isNotEmpty) {
+      // Calculate order total (gas quantity * price per gallon + delivery fee)
+      final orderTotal = (gasQuantity * AppConstants.pricePerGallon) + AppConstants.deliveryFee;
+      final driverAmount = orderTotal * 0.8;
+      
+      print('Attempting to create driver payment: driverId=$driverId, orderId=$orderId, orderTotal=$orderTotal, driverAmount=$driverAmount');
+      
+      // Try to check availability if not already available
+      if (!backendService.isAvailable) {
+        print('Backend not marked as available, attempting to check availability...');
+        await backendService.checkAvailability();
+      }
+      
+      try {
+        final success = await backendService.createDriverPayment(
+          driverId: driverId,
+          orderId: orderId,
+          orderTotal: orderTotal,
+          currency: 'usd',
+        );
         
-        print('Attempting to create driver payment: driverId=$driverId, orderId=$orderId, orderTotal=$orderTotal, driverAmount=$driverAmount');
-        
-        // Try to check availability if not already available
-        if (!backendService.isAvailable) {
-          print('Backend not marked as available, attempting to check availability...');
-          await backendService.checkAvailability();
+        if (success) {
+          print('SUCCESS: Driver payment created successfully - driverId=$driverId, orderId=$orderId, amount=$driverAmount');
+        } else {
+          print('WARNING: Driver payment creation returned false - driverId=$driverId, orderId=$orderId');
+          // Don't fail delivery completion if payment creation fails, but log it
         }
-        
-        try {
-          final success = await backendService.createDriverPayment(
-            driverId: driverId,
-            orderId: orderId,
-            orderTotal: orderTotal,
-            currency: 'usd',
-          );
-          
-          if (success) {
-            print('SUCCESS: Driver payment created successfully - driverId=$driverId, orderId=$orderId, amount=$driverAmount');
-          } else {
-            print('WARNING: Driver payment creation returned false - driverId=$driverId, orderId=$orderId');
-            // Don't fail delivery completion if payment creation fails, but log it
-          }
-        } catch (e, stackTrace) {
-          print('ERROR: Exception creating driver payment: $e');
-          print('Stack trace: $stackTrace');
-          // Don't fail delivery completion if payment creation fails
-        }
-      } else {
+      } catch (e, stackTrace) {
+        print('ERROR: Exception creating driver payment: $e');
+        print('Stack trace: $stackTrace');
+        // Don't fail delivery completion if payment creation fails
+      }
+    } else {
+      if (driverId == null || driverId.isEmpty) {
         print('WARNING: Cannot create driver payment - driverId is null or empty for orderId=$orderId');
+      }
+      if (backendService == null) {
+        print('WARNING: Backend service is null, cannot create driver payment');
       }
     }
   }
