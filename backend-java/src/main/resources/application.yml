@@ -3,7 +3,9 @@ spring:
     name: quickgas-backend
   
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/quickgas}
+    # DATABASE_URL will be parsed by DataSourceConfig if provided (Railway format)
+    # Otherwise, use individual DATABASE_* variables or defaults
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/quickgas}
     username: ${DATABASE_USERNAME:postgres}
     password: ${DATABASE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver

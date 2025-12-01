@@ -5,7 +5,6 @@ import '../../core/theme/app_theme.dart';
 import '../../core/constants/api_keys.dart';
 import '../../services/payment_service.dart';
 import '../../services/payment_error.dart';
-import '../../core/providers/auth_provider.dart';
 
 class PaymentScreen extends ConsumerStatefulWidget {
   final double amount;
@@ -56,37 +55,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     try {
       final paymentService = PaymentService();
-      final backendService = ref.read(backendServiceProvider);
       
-      // Check if backend is available - recheck if needed
-      if (backendService == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Backend service not configured. Please set BACKEND_URL in environment variables.'),
-              duration: Duration(seconds: 5),
-            ),
-          );
-        }
-        return;
-      }
-      
-      // Recheck availability if not already checked
-      if (!backendService.isAvailable) {
-        final isAvailable = await backendService.checkAvailability();
-        if (!isAvailable) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Payment processing requires backend connection. Please try again later or use cash payment.'),
-                duration: Duration(seconds: 5),
-              ),
-            );
-          }
-          return;
-        }
-      }
-
       // Get backend URL from ApiKeys
       final backendUrl = ApiKeys.backendUrl;
       if (backendUrl.isEmpty || backendUrl == 'YOUR_BACKEND_URL_HERE') {
@@ -98,9 +67,17 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             ),
           );
         }
+        setState(() {
+          _isProcessing = false;
+        });
         return;
       }
+      
+      // Set backend URL for payment service
       paymentService.setBackendUrl(backendUrl);
+      
+      // Don't block on backend availability check - just try to create payment intent
+      // If backend is down, the payment intent creation will fail with a clear error
 
       // Generate idempotency key from order ID
       final idempotencyKey = 'order_${widget.orderId}_${DateTime.now().millisecondsSinceEpoch}';
@@ -115,10 +92,17 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         idempotencyKey: idempotencyKey,
       );
 
+      // Verify Stripe is initialized
+      if (Stripe.publishableKey.isEmpty) {
+        throw PaymentError.configuration('Stripe is not initialized. Please check your configuration.');
+      }
+
       // Use PaymentSheet for secure payment processing
       // PaymentSheet handles card collection, validation, and 3D Secure automatically
       // This is the recommended Stripe approach for Flutter
       try {
+        print('Initializing PaymentSheet with clientSecret: ${clientSecret.substring(0, 20)}...');
+        
         // Initialize PaymentSheet with the payment intent
         await Stripe.instance.initPaymentSheet(
           paymentSheetParameters: SetupPaymentSheetParameters(
@@ -127,9 +111,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           ),
         );
         
+        print('PaymentSheet initialized successfully, presenting...');
+        
         // Present PaymentSheet to user
         // This shows a native payment form where user can enter card details securely
         await Stripe.instance.presentPaymentSheet();
+        
+        print('PaymentSheet presented successfully');
         
         // Payment was successful
         final paymentIntentId = paymentService.extractPaymentIntentId(clientSecret);
@@ -143,6 +131,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         // Handle Stripe-specific errors
         // Check if user canceled (error code 'payment_intent_payment_attempt_failed' or similar)
         final errorCode = e.error.code.toString();
+        print('StripeException: code=$errorCode, message=${e.error.message}');
         if (errorCode.contains('canceled') || errorCode.contains('Canceled')) {
           // User canceled - don't show error, just stop processing
           setState(() {
@@ -155,7 +144,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           _errorMessage = e.error.message ?? 'Payment failed. Please try again.';
           _isProcessing = false;
         });
-      } catch (e) {
+      } catch (e, stackTrace) {
+        print('PaymentSheet error: $e');
+        print('Stack trace: $stackTrace');
         setState(() {
           _errorMessage = 'An unexpected error occurred. Please try again.';
           _isProcessing = false;
@@ -163,10 +154,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       }
 
     } on PaymentError catch (e) {
+      print('PaymentError: ${e.userFriendlyMessage}');
       setState(() {
         _errorMessage = e.userFriendlyMessage;
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print('Unexpected error in _processPayment: $e');
+      print('Stack trace: $stackTrace');
       setState(() {
         _errorMessage = 'An unexpected error occurred. Please try again.';
       });
