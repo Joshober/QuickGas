@@ -1,22 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/providers/auth_provider.dart';
 import '../../../../core/animations/page_transitions.dart';
 import '../../../../services/traffic_service.dart';
 import '../../../../shared/models/order_model.dart';
+import '../../../../shared/models/route_model.dart';
 import '../../../map/map_widget.dart';
 import 'add_order_to_route_screen.dart';
 
 class RoutePlanningScreen extends ConsumerStatefulWidget {
-  final OrderModel initialOrder;
+  final OrderModel? initialOrder;
   final List<OrderModel>? additionalOrders;
+  final String? routeId; // Optional route ID to load existing route
 
   const RoutePlanningScreen({
     super.key,
-    required this.initialOrder,
+    this.initialOrder,
     this.additionalOrders,
+    this.routeId,
   });
 
   @override
@@ -29,16 +34,81 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
   List<RoutePoint> _waypoints = [];
   OptimizedRoute? _optimizedRoute;
   bool _isOptimizing = false;
+  bool _isLoading = false;
+  String? _currentRouteId;
 
   @override
   void initState() {
     super.initState();
-    _selectedOrders.add(widget.initialOrder);
-    // Add additional orders if provided
-    if (widget.additionalOrders != null) {
-      _selectedOrders.addAll(widget.additionalOrders!);
+    if (widget.routeId != null) {
+      _loadRoute(widget.routeId!);
+    } else if (widget.initialOrder != null) {
+      _selectedOrders.add(widget.initialOrder!);
+      if (widget.additionalOrders != null) {
+        _selectedOrders.addAll(widget.additionalOrders!);
+      }
+      _updateWaypoints();
     }
-    // Initialize waypoints with all selected orders
+  }
+
+  Future<void> _loadRoute(String routeId) async {
+    setState(() => _isLoading = true);
+    try {
+      final firebaseService = ref.read(firebaseServiceProvider);
+      final route = await firebaseService.getRouteById(routeId);
+      
+      if (route != null && mounted) {
+        setState(() {
+          _currentRouteId = routeId;
+        });
+
+        // Load orders from route
+        final orders = <OrderModel>[];
+        for (final orderId in route.orderIds) {
+          final orderDoc = await firebaseService.getOrderById(orderId);
+          if (orderDoc != null) {
+            orders.add(orderDoc);
+          }
+        }
+
+        setState(() {
+          _selectedOrders.clear();
+          _selectedOrders.addAll(orders);
+          _waypoints = route.waypoints
+              .map((wp) => RoutePoint(wp.latitude, wp.longitude))
+              .toList();
+          
+          // If route has polyline, create OptimizedRoute from it
+          if (route.polyline != null && route.totalDistance != null && route.totalDuration != null) {
+            // Create a simplified OptimizedRoute from saved route data
+            _optimizedRoute = OptimizedRoute(
+              waypoints: _waypoints,
+              segments: [], // Empty segments as we don't have that data
+              totalDistance: route.totalDistance!,
+              totalDuration: route.totalDuration!,
+              etas: [], // Empty ETAs
+              polyline: route.polyline,
+            );
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load route: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _updateWaypoints() {
     _waypoints = _selectedOrders
         .map(
           (order) =>
@@ -58,13 +128,7 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
     if (selectedOrder != null) {
       setState(() {
         _selectedOrders.add(selectedOrder);
-        // Update waypoints to show all selected orders
-        _waypoints = _selectedOrders
-            .map(
-              (order) =>
-                  RoutePoint(order.location.latitude, order.location.longitude),
-            )
-            .toList();
+        _updateWaypoints();
         _optimizedRoute = null;
       });
     }
@@ -83,9 +147,13 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
     try {
       final trafficService = ref.read(trafficServiceProvider);
 
+      if (_selectedOrders.isEmpty) {
+        throw Exception('No orders selected');
+      }
+
       final startPoint = RoutePoint(
-        widget.initialOrder.location.latitude,
-        widget.initialOrder.location.longitude,
+        _selectedOrders.first.location.latitude,
+        _selectedOrders.first.location.longitude,
       );
 
       final stops = _selectedOrders
@@ -107,10 +175,13 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
         _waypoints = optimized.waypoints;
       });
 
+      // Save route to Firestore
+      await _saveRoute(optimized);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Route optimized successfully!'),
+            content: Text('Route optimized and saved successfully!'),
             backgroundColor: AppTheme.successColor,
           ),
         );
@@ -180,6 +251,101 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
     }
   }
 
+  Future<void> _saveRoute(OptimizedRoute optimized) async {
+    try {
+      final firebaseService = ref.read(firebaseServiceProvider);
+      final authState = ref.read(authStateProvider);
+
+      if (authState.value == null) {
+        throw Exception('Driver not authenticated');
+      }
+
+      final orderIds = _selectedOrders.map((o) => o.id).toList();
+      final waypoints = optimized.waypoints
+          .map((wp) => GeoPoint(wp.latitude, wp.longitude))
+          .toList();
+
+      if (_currentRouteId != null) {
+        // Update existing route
+        await firebaseService.updateRouteStatus(
+          _currentRouteId!,
+          AppConstants.routeStatusPlanning,
+        );
+        // Note: We could add an updateRoute method to update polyline, etc.
+      } else {
+        // Create new route
+        final routeId = await firebaseService.createRoute(
+          driverId: authState.value!.uid,
+          orderIds: orderIds,
+          waypoints: waypoints,
+          polyline: optimized.polyline,
+          totalDistance: optimized.totalDistance,
+          totalDuration: optimized.totalDuration,
+        );
+        setState(() {
+          _currentRouteId = routeId;
+        });
+      }
+    } catch (e) {
+      print('Failed to save route: $e');
+    }
+  }
+
+  Future<void> _startRoute() async {
+    if (_currentRouteId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please optimize and save the route first'),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+      return;
+    }
+
+    if (_selectedOrders.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No orders in route'),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isOptimizing = true);
+
+    try {
+      final firebaseService = ref.read(firebaseServiceProvider);
+      final backendService = ref.read(backendServiceProvider);
+
+      // Start route - this updates route status and all orders to in_transit
+      await firebaseService.startRoute(_currentRouteId!, backendService);
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Route started! All orders marked as in transit.'),
+            backgroundColor: AppTheme.successColor,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start route: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isOptimizing = false);
+      }
+    }
+  }
+
   Future<void> _acceptOrders() async {
     if (_selectedOrders.isEmpty) return;
 
@@ -229,9 +395,15 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Plan Route'),
+        title: Text(_currentRouteId != null ? 'Route Details' : 'Plan Route'),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -379,35 +551,67 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isOptimizing ? null : _acceptOrders,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        backgroundColor: AppTheme.primaryColor,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: _isOptimizing
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white,
+                  // Show Start Route button if route is optimized and saved
+                  if (_currentRouteId != null && _optimizedRoute != null)
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isOptimizing ? null : _startRoute,
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          backgroundColor: AppTheme.successColor,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: _isOptimizing
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Text(
+                                'Start Route',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            )
-                          : const Text(
-                              'Accept Orders',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isOptimizing ? null : _acceptOrders,
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          backgroundColor: AppTheme.primaryColor,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: _isOptimizing
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Text(
+                                'Accept Orders',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

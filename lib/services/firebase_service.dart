@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../shared/models/user_model.dart';
 import '../shared/models/order_model.dart';
+import '../shared/models/route_model.dart';
 import '../core/constants/app_constants.dart';
 import 'backend_service.dart';
 
@@ -268,6 +269,18 @@ class FirebaseService {
         );
   }
 
+  Future<OrderModel?> getOrderById(String orderId) async {
+    final doc = await _firestore
+        .collection(AppConstants.ordersCollection)
+        .doc(orderId)
+        .get();
+
+    if (doc.exists) {
+      return OrderModel.fromFirestore(doc);
+    }
+    return null;
+  }
+
   Future<void> updateOrderStatus(
     String orderId,
     String status, {
@@ -396,6 +409,20 @@ class FirebaseService {
     BackendService? backendService,
     String? photoUrl, // URL from backend if image was uploaded there
   }) async {
+    // Get order details first to calculate driver payment
+    final orderDoc = await _firestore
+        .collection(AppConstants.ordersCollection)
+        .doc(orderId)
+        .get();
+    
+    if (!orderDoc.exists) {
+      throw Exception('Order not found');
+    }
+    
+    final orderData = orderDoc.data() as Map<String, dynamic>;
+    final driverId = orderData['driverId'] as String?;
+    final gasQuantity = (orderData['gasQuantity'] as num?)?.toDouble() ?? 0.0;
+    
     // Use backend URL if available, otherwise fall back to base64
     final photoUrlToStore = photoUrl ?? photoBase64;
 
@@ -416,6 +443,25 @@ class FirebaseService {
         orderId,
         AppConstants.orderStatusCompleted,
       ).catchError((e) => print('Failed to notify customer: $e'));
+      
+      // Create driver payment (80% of order total) when order is completed
+      if (driverId != null && driverId.isNotEmpty) {
+        // Calculate order total (gas quantity * price per gallon + delivery fee)
+        final orderTotal = (gasQuantity * AppConstants.pricePerGallon) + AppConstants.deliveryFee;
+        
+        try {
+          await backendService.createDriverPayment(
+            driverId: driverId,
+            orderId: orderId,
+            orderTotal: orderTotal,
+            currency: 'usd',
+          );
+          print('Driver payment created: driverId=$driverId, orderId=$orderId, amount=${orderTotal * 0.8}');
+        } catch (e) {
+          print('Failed to create driver payment: $e');
+          // Don't fail delivery completion if payment creation fails
+        }
+      }
     }
   }
 
@@ -502,5 +548,195 @@ class FirebaseService {
         print('Failed to send notification: $e');
       }
     }
+  }
+
+  // Route Management Methods
+
+  /// Create a new route
+  Future<String> createRoute({
+    required String driverId,
+    required List<String> orderIds,
+    required List<GeoPoint> waypoints,
+    String? polyline,
+    double? totalDistance,
+    double? totalDuration,
+  }) async {
+    final routeModel = RouteModel(
+      id: '', // Will be set by Firestore
+      driverId: driverId,
+      orderIds: orderIds,
+      status: AppConstants.routeStatusPlanning,
+      polyline: polyline,
+      waypoints: waypoints,
+      totalDistance: totalDistance,
+      totalDuration: totalDuration,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    final docRef = await _firestore
+        .collection(AppConstants.routesCollection)
+        .add(routeModel.toFirestore());
+
+    return docRef.id;
+  }
+
+  /// Get all routes for a driver (only active routes)
+  Stream<List<RouteModel>> getDriverRoutes(String driverId) {
+    return _firestore
+        .collection(AppConstants.routesCollection)
+        .where('driverId', isEqualTo: driverId)
+        .where('status', whereIn: [
+          AppConstants.routeStatusPlanning,
+          AppConstants.routeStatusActive
+        ])
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => RouteModel.fromFirestore(doc))
+              .toList(),
+        );
+  }
+
+  /// Get a route by ID
+  Future<RouteModel?> getRouteById(String routeId) async {
+    final doc = await _firestore
+        .collection(AppConstants.routesCollection)
+        .doc(routeId)
+        .get();
+
+    if (doc.exists) {
+      return RouteModel.fromFirestore(doc);
+    }
+    return null;
+  }
+
+  /// Update route status
+  Future<void> updateRouteStatus(
+    String routeId,
+    String status, {
+    DateTime? startedAt,
+    DateTime? completedAt,
+  }) async {
+    final updateData = <String, dynamic>{
+      'status': status,
+      'updatedAt': Timestamp.fromDate(DateTime.now()),
+    };
+
+    if (startedAt != null) {
+      updateData['startedAt'] = Timestamp.fromDate(startedAt);
+    }
+
+    if (completedAt != null) {
+      updateData['completedAt'] = Timestamp.fromDate(completedAt);
+    }
+
+    await _firestore
+        .collection(AppConstants.routesCollection)
+        .doc(routeId)
+        .update(updateData);
+  }
+
+  /// Start a route - updates route status and all orders to in_transit
+  Future<void> startRoute(
+    String routeId,
+    BackendService? backendService,
+  ) async {
+    final route = await getRouteById(routeId);
+    if (route == null) {
+      throw Exception('Route not found');
+    }
+
+    // Update route status to active
+    await updateRouteStatus(
+      routeId,
+      AppConstants.routeStatusActive,
+      startedAt: DateTime.now(),
+    );
+
+    // Update all orders in route to in_transit
+    await updateOrdersInRoute(route.orderIds, AppConstants.orderStatusInTransit,
+        backendService: backendService);
+  }
+
+  /// Complete a route - marks as completed and deletes it (only active routes saved)
+  Future<void> completeRoute(String routeId) async {
+    // Mark route as completed
+    await updateRouteStatus(
+      routeId,
+      AppConstants.routeStatusCompleted,
+      completedAt: DateTime.now(),
+    );
+
+    // Delete the route (only active routes are saved)
+    await _firestore
+        .collection(AppConstants.routesCollection)
+        .doc(routeId)
+        .delete();
+  }
+
+  /// Update multiple orders' status in batch
+  Future<void> updateOrderStatusBatch(
+    List<String> orderIds,
+    String status, {
+    BackendService? backendService,
+  }) async {
+    final batch = _firestore.batch();
+
+    for (final orderId in orderIds) {
+      final orderRef =
+          _firestore.collection(AppConstants.ordersCollection).doc(orderId);
+      batch.update(orderRef, {
+        'status': status,
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
+    }
+
+    await batch.commit();
+
+    // Send notifications if backend service is available
+    if (backendService != null) {
+      for (final orderId in orderIds) {
+        try {
+          final orderDoc = await _firestore
+              .collection(AppConstants.ordersCollection)
+              .doc(orderId)
+              .get();
+          if (orderDoc.exists) {
+            final orderData = orderDoc.data() as Map<String, dynamic>;
+            final customerId = orderData['customerId'] as String?;
+            if (customerId != null) {
+              final userDoc = await _firestore
+                  .collection(AppConstants.usersCollection)
+                  .doc(customerId)
+                  .get();
+              if (userDoc.exists) {
+                final userData = userDoc.data() as Map<String, dynamic>;
+                final fcmToken = userData['fcmToken'] as String?;
+                if (fcmToken != null && fcmToken.isNotEmpty) {
+                  _notifyOrderStatusChange(
+                    backendService,
+                    orderId,
+                    status,
+                  ).catchError((e) => print('Failed to send notification: $e'));
+                }
+              }
+            }
+          }
+        } catch (e) {
+          print('Error sending notification for order $orderId: $e');
+        }
+      }
+    }
+  }
+
+  /// Helper method to update orders in a route
+  Future<void> updateOrdersInRoute(
+    List<String> orderIds,
+    String status, {
+    BackendService? backendService,
+  }) async {
+    await updateOrderStatusBatch(orderIds, status, backendService: backendService);
   }
 }

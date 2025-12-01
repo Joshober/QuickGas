@@ -61,6 +61,35 @@ class BackendService {
 
   bool get isAvailable => _isAvailable;
 
+  Future<bool> createDriverPayment({
+    required String driverId,
+    required String orderId,
+    required double orderTotal,
+    String currency = 'usd',
+    String? routeId,
+  }) async {
+    if (_baseUrl == null || !_isAvailable) {
+      return false;
+    }
+
+    try {
+      await _dio.post(
+        '/api/driver-payments',
+        data: {
+          'driverId': driverId,
+          'orderId': orderId,
+          'orderTotal': orderTotal,
+          'currency': currency,
+          if (routeId != null) 'routeId': routeId,
+        },
+      );
+      return true;
+    } catch (e) {
+      print('Failed to create driver payment: $e');
+      return false;
+    }
+  }
+
   Future<bool> sendNotification({
     required String fcmToken,
     required String title,
