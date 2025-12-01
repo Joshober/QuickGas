@@ -21,20 +21,15 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class RouteService {
     
-    private final WebClient webClient;
     private final RouteRepository routeRepository;
     private final NotificationService notificationService;
     
     @Value("${openrouteservice.api-key:}")
     private String defaultApiKey;
     
-    public RouteService(RouteRepository routeRepository, NotificationService notificationService) {
-        this.routeRepository = routeRepository;
-        this.notificationService = notificationService;
-        this.webClient = WebClient.builder()
-            .baseUrl("https://api.openrouteservice.org/v2")
-            .build();
-    }
+    private final WebClient webClient = WebClient.builder()
+        .baseUrl("https://api.openrouteservice.org/v2")
+        .build();
     
     public Map<String, Object> optimizeRoute(RouteOptimizeRequest request) {
         String apiKey = request.getApiKey() != null && !request.getApiKey().isEmpty()
