@@ -10,8 +10,9 @@ class BackendService {
     _baseUrl = url;
     _dio.options.baseUrl = url;
     _dio.options.headers['Content-Type'] = 'application/json';
-    _dio.options.connectTimeout = const Duration(seconds: 5);
-    _dio.options.receiveTimeout = const Duration(seconds: 5);
+    // Increased timeouts for better reliability, especially on first connection
+    _dio.options.connectTimeout = const Duration(seconds: 10);
+    _dio.options.receiveTimeout = const Duration(seconds: 10);
   }
 
   /// Check if backend is available by hitting health endpoint

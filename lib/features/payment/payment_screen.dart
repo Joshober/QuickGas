@@ -25,78 +25,15 @@ class PaymentScreen extends ConsumerStatefulWidget {
 
 class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   final _cardFormKey = GlobalKey<FormState>();
-  final _cardNumberController = TextEditingController();
-  final _expiryDateController = TextEditingController();
-  final _cvcController = TextEditingController();
   final _cardHolderNameController = TextEditingController();
 
   bool _isProcessing = false;
   bool _isAuthenticating = false;
   String? _errorMessage;
-  CardFormEditController? _cardFormController;
-  bool _stripeInitialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeStripe();
-  }
-
-  Future<void> _initializeStripe() async {
-    // Ensure Stripe is initialized before using CardFormField
-    final stripePublishableKey = ApiKeys.stripePublishableKey;
-    
-    if (stripePublishableKey.isEmpty) {
-      // If no key, show error
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Stripe publishable key not configured. Payment processing unavailable.';
-          _stripeInitialized = false;
-        });
-      }
-      return;
-    }
-    
-    // Set the publishable key if not already set
-    if (Stripe.publishableKey != stripePublishableKey) {
-      Stripe.publishableKey = stripePublishableKey;
-    }
-    
-    // Wait for Stripe SDK to initialize on native side
-    // The native SDK needs time to initialize after setting the key
-    await Future.delayed(const Duration(milliseconds: 300));
-    
-    // Now create the controller after Stripe is initialized
-    try {
-      _cardFormController = CardFormEditController();
-      
-      // Give it a bit more time to ensure everything is ready
-      await Future.delayed(const Duration(milliseconds: 100));
-      
-      if (mounted) {
-        setState(() {
-          _stripeInitialized = true;
-        });
-      }
-    } catch (e) {
-      // If controller creation fails, Stripe might not be ready yet
-      debugPrint('Error creating CardFormController: $e');
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Failed to initialize payment form. Please try again.';
-          _stripeInitialized = false;
-        });
-      }
-    }
-  }
 
   @override
   void dispose() {
-    _cardNumberController.dispose();
-    _expiryDateController.dispose();
-    _cvcController.dispose();
     _cardHolderNameController.dispose();
-    _cardFormController?.dispose();
     super.dispose();
   }
 
@@ -109,17 +46,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       return;
     }
 
-    if (!_cardFormKey.currentState!.validate()) {
-      return;
-    }
-
-    // Check if card form is valid
-    if (_cardFormController == null) {
-      setState(() {
-        _errorMessage = 'Card form not initialized';
-      });
-      return;
-    }
+    // No form validation needed - PaymentSheet handles card input
 
     setState(() {
       _isProcessing = true;
@@ -188,58 +115,53 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         idempotencyKey: idempotencyKey,
       );
 
-      // Payment intent ID can be extracted from clientSecret if needed for cancellation
-
-      // Create payment method using card form
-      // CardFormField automatically handles card input
-      final paymentMethodParams = PaymentMethodParams.card(
-        paymentMethodData: PaymentMethodData(
-          billingDetails: BillingDetails(
-            name: _cardHolderNameController.text.isEmpty
-                ? null
-                : _cardHolderNameController.text,
-          ),
-        ),
-      );
-
-      // Confirm payment
-      PaymentIntent paymentIntent;
+      // Use PaymentSheet for secure payment processing
+      // PaymentSheet handles card collection, validation, and 3D Secure automatically
+      // This is the recommended Stripe approach for Flutter
       try {
-        paymentIntent = await paymentService.confirmPayment(
-          paymentIntentClientSecret: clientSecret,
-          params: paymentMethodParams,
+        // Initialize PaymentSheet with the payment intent
+        await Stripe.instance.initPaymentSheet(
+          paymentSheetParameters: SetupPaymentSheetParameters(
+            paymentIntentClientSecret: clientSecret,
+            merchantDisplayName: 'QuickGas',
+          ),
         );
-      } catch (e) {
-        // Check if payment requires action (3D Secure)
-        if (e is PaymentError && e.type == PaymentErrorType.payment) {
-          // Try to retrieve payment intent to check if it requires action
-          try {
-            final retrievedIntent = await Stripe.instance.retrievePaymentIntent(clientSecret);
-            if (retrievedIntent.status == PaymentIntentsStatus.RequiresAction) {
-              // Handle 3D Secure authentication
-              return await _handle3DSecure(clientSecret, paymentService);
-            }
-          } catch (_) {
-            // Fall through to error handling
-          }
-        }
-        rethrow;
-      }
-
-      // Check payment status
-      if (paymentIntent.status == PaymentIntentsStatus.Succeeded) {
+        
+        // Present PaymentSheet to user
+        // This shows a native payment form where user can enter card details securely
+        await Stripe.instance.presentPaymentSheet();
+        
+        // Payment was successful
+        final paymentIntentId = paymentService.extractPaymentIntentId(clientSecret);
         if (mounted) {
           Navigator.of(context).pop({
             'success': true,
-            'paymentIntentId': paymentIntent.id,
+            'paymentIntentId': paymentIntentId,
           });
         }
-      } else if (paymentIntent.status == PaymentIntentsStatus.RequiresAction) {
-        // Handle 3D Secure
-        await _handle3DSecure(clientSecret, paymentService);
-      } else {
-        throw PaymentError.payment('Payment not completed: ${paymentIntent.status}');
+      } on StripeException catch (e) {
+        // Handle Stripe-specific errors
+        // Check if user canceled (error code 'payment_intent_payment_attempt_failed' or similar)
+        final errorCode = e.error.code.toString();
+        if (errorCode.contains('canceled') || errorCode.contains('Canceled')) {
+          // User canceled - don't show error, just stop processing
+          setState(() {
+            _isProcessing = false;
+          });
+          return;
+        }
+        
+        setState(() {
+          _errorMessage = e.error.message ?? 'Payment failed. Please try again.';
+          _isProcessing = false;
+        });
+      } catch (e) {
+        setState(() {
+          _errorMessage = 'An unexpected error occurred. Please try again.';
+          _isProcessing = false;
+        });
       }
+
     } on PaymentError catch (e) {
       setState(() {
         _errorMessage = e.userFriendlyMessage;
@@ -258,57 +180,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
   }
 
-  Future<void> _handle3DSecure(String clientSecret, PaymentService paymentService) async {
-    setState(() {
-      _isAuthenticating = true;
-      _errorMessage = null;
-    });
-
-    try {
-      // Retrieve payment intent to get the action
-      final paymentIntent = await Stripe.instance.retrievePaymentIntent(clientSecret);
-      
-      if (paymentIntent.status != PaymentIntentsStatus.RequiresAction) {
-        throw PaymentError.payment('Payment does not require authentication');
-      }
-
-      final nextAction = paymentIntent.nextAction;
-      if (nextAction == null) {
-        throw PaymentError.payment('No authentication action available');
-      }
-
-      // Handle the authentication
-      final authenticatedIntent = await paymentService.handlePaymentAction(
-        paymentIntentClientSecret: clientSecret,
-      );
-
-      // Check final status
-      if (authenticatedIntent.status == PaymentIntentsStatus.Succeeded) {
-        if (mounted) {
-          Navigator.of(context).pop({
-            'success': true,
-            'paymentIntentId': authenticatedIntent.id,
-          });
-        }
-      } else {
-        throw PaymentError.payment('Authentication failed: ${authenticatedIntent.status}');
-      }
-    } on PaymentError catch (e) {
-      setState(() {
-        _errorMessage = e.userFriendlyMessage;
-      });
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Authentication failed. Please try again.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isAuthenticating = false;
-        });
-      }
-    }
-  }
+  // Note: 3D Secure is handled automatically by PaymentSheet
 
   @override
   Widget build(BuildContext context) {
@@ -368,29 +240,40 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Stripe Card Form (includes card number, expiry, CVC)
-              if (_stripeInitialized && _cardFormController != null)
-                CardFormField(
-                  controller: _cardFormController!,
-                  style: CardFormStyle(
-                    borderColor: Colors.grey,
-                    borderWidth: 1,
-                    borderRadius: 8,
-                    textColor: Colors.black,
-                    placeholderColor: Colors.grey,
-                  ),
-                )
-              else
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+              // Payment Information
+              // Note: Card details are collected via PaymentSheet when user taps "Pay"
+              // PaymentSheet provides a secure, native payment form
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey),
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey[50],
                 ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Payment Information',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Card details will be collected securely when you tap "Pay". '
+                      'You\'ll be prompted to enter your card information in a secure payment form.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 16),
 
               // Card Holder Name (optional but recommended)

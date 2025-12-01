@@ -78,14 +78,14 @@ void main() async {
     try {
       final backendService = BackendService();
       backendService.setBaseUrl(backendUrl);
-      
+
       // Check if backend is available with longer timeout for first connection
       debugPrint('Checking backend availability: $backendUrl');
       backendAvailable = await backendService.checkAvailability();
-      
+
       if (backendAvailable) {
         debugPrint('✓ Backend connected: $backendUrl');
-        
+
         // Configure payment service with backend
         final paymentService = PaymentService();
         paymentService.setBackendUrl(backendUrl);
@@ -93,11 +93,15 @@ void main() async {
         debugPrint('⚠ Backend unavailable, using Firebase-only mode');
         debugPrint('  Backend URL: $backendUrl');
         debugPrint('  Health endpoint: $backendUrl/health');
-        debugPrint('  Check Railway dashboard to ensure backend service is running');
+        debugPrint(
+          '  Check Railway dashboard to ensure backend service is running',
+        );
         debugPrint('  Common issues:');
         debugPrint('    - Backend service not deployed or crashed');
         debugPrint('    - Database connection issues');
-        debugPrint('    - Missing environment variables (STRIPE_SECRET_KEY, DATABASE_URL)');
+        debugPrint(
+          '    - Missing environment variables (STRIPE_SECRET_KEY, DATABASE_URL)',
+        );
       }
     } catch (e, stackTrace) {
       debugPrint('⚠ Backend connection failed: $e');
@@ -114,24 +118,37 @@ void main() async {
 
   // Initialize Stripe SDK early (required before using CardFormField)
   final stripePublishableKey = ApiKeys.stripePublishableKey;
-  debugPrint('DEBUG: Stripe publishable key from ApiKeys: ${stripePublishableKey.isEmpty ? "EMPTY" : "${stripePublishableKey.substring(0, stripePublishableKey.length > 20 ? 20 : stripePublishableKey.length)}..."}');
+  debugPrint(
+    'DEBUG: Stripe publishable key from ApiKeys: ${stripePublishableKey.isEmpty ? "EMPTY" : "${stripePublishableKey.substring(0, stripePublishableKey.length > 20 ? 20 : stripePublishableKey.length)}..."}',
+  );
   debugPrint('DEBUG: dotenv.isInitialized: ${dotenv.isInitialized}');
   if (dotenv.isInitialized) {
-    debugPrint('DEBUG: dotenv.env[STRIPE_PUBLISHABLE_KEY]: ${dotenv.env['STRIPE_PUBLISHABLE_KEY'] ?? "NOT SET"}');
+    debugPrint(
+      'DEBUG: dotenv.env[STRIPE_PUBLISHABLE_KEY]: ${dotenv.env['STRIPE_PUBLISHABLE_KEY'] ?? "NOT SET"}',
+    );
   }
-  if (stripePublishableKey.isNotEmpty && stripePublishableKey != 'STRIPE_PUBLISHABLE_KEY') {
+  if (stripePublishableKey.isNotEmpty &&
+      stripePublishableKey != 'STRIPE_PUBLISHABLE_KEY') {
     Stripe.publishableKey = stripePublishableKey;
     debugPrint('✓ Stripe publishable key configured');
   } else {
-    debugPrint('⚠ Stripe publishable key not configured - Payment features will be unavailable');
+    debugPrint(
+      '⚠ Stripe publishable key not configured - Payment features will be unavailable',
+    );
     if (stripePublishableKey == 'STRIPE_PUBLISHABLE_KEY') {
-      debugPrint('ERROR: Stripe key appears to be the placeholder string, not an actual key');
-      debugPrint('  Please check your .env file and ensure STRIPE_PUBLISHABLE_KEY is set to your actual Stripe key');
+      debugPrint(
+        'ERROR: Stripe key appears to be the placeholder string, not an actual key',
+      );
+      debugPrint(
+        '  Please check your .env file and ensure STRIPE_PUBLISHABLE_KEY is set to your actual Stripe key',
+      );
     }
   }
-  
+
   if (!backendAvailable) {
-    debugPrint('ℹ App running in Firebase-only mode. Backend features disabled.');
+    debugPrint(
+      'ℹ App running in Firebase-only mode. Backend features disabled.',
+    );
   }
 
   runApp(const ProviderScope(child: MyApp()));
