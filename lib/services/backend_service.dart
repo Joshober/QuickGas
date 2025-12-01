@@ -90,6 +90,26 @@ class BackendService {
     }
   }
 
+  Future<List<Map<String, dynamic>>?> getDriverPayments(String driverId) async {
+    if (_baseUrl == null || !_isAvailable) {
+      return null;
+    }
+
+    try {
+      final response = await _dio.get(
+        '/api/driver-payments/driver/$driverId',
+      );
+
+      if (response.data['success'] == true && response.data['payments'] != null) {
+        return List<Map<String, dynamic>>.from(response.data['payments']);
+      }
+      return [];
+    } catch (e) {
+      print('Failed to get driver payments: $e');
+      return null;
+    }
+  }
+
   Future<bool> sendNotification({
     required String fcmToken,
     required String title,

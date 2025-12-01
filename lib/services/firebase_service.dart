@@ -128,6 +128,26 @@ class FirebaseService {
         .update({'name': name, 'phone': phone});
   }
 
+  Future<void> updateUserStripeAccountId(String userId, String? stripeAccountId) async {
+    await _firestore
+        .collection(AppConstants.usersCollection)
+        .doc(userId)
+        .update({'stripeAccountId': stripeAccountId});
+  }
+
+  Future<String?> getUserStripeAccountId(String userId) async {
+    final doc = await _firestore
+        .collection(AppConstants.usersCollection)
+        .doc(userId)
+        .get();
+
+    if (doc.exists) {
+      final data = doc.data() as Map<String, dynamic>;
+      return data['stripeAccountId'] as String?;
+    }
+    return null;
+  }
+
   Future<String> createOrder({
     required String customerId,
     required GeoPoint location,

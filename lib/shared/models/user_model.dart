@@ -8,6 +8,7 @@ class UserModel {
   final String role; // 'customer', 'driver', or 'both'
   final String defaultRole; // 'customer' or 'driver'
   final String? fcmToken;
+  final String? stripeAccountId; // Stripe Connect account ID for drivers
   final DateTime createdAt;
 
   UserModel({
@@ -18,6 +19,7 @@ class UserModel {
     required this.role,
     required this.defaultRole,
     this.fcmToken,
+    this.stripeAccountId,
     required this.createdAt,
   });
 
@@ -31,6 +33,7 @@ class UserModel {
       role: data['role'] ?? 'customer',
       defaultRole: data['defaultRole'] ?? 'customer',
       fcmToken: data['fcmToken'],
+      stripeAccountId: data['stripeAccountId'],
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
@@ -43,6 +46,7 @@ class UserModel {
       'role': role,
       'defaultRole': defaultRole,
       'fcmToken': fcmToken,
+      'stripeAccountId': stripeAccountId,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
@@ -55,6 +59,7 @@ class UserModel {
     String? role,
     String? defaultRole,
     String? fcmToken,
+    String? stripeAccountId,
     DateTime? createdAt,
   }) {
     return UserModel(
@@ -65,6 +70,7 @@ class UserModel {
       role: role ?? this.role,
       defaultRole: defaultRole ?? this.defaultRole,
       fcmToken: fcmToken ?? this.fcmToken,
+      stripeAccountId: stripeAccountId ?? this.stripeAccountId,
       createdAt: createdAt ?? this.createdAt,
     );
   }

@@ -1,7 +1,9 @@
 package com.quickgas.service;
 
 import com.quickgas.entity.DriverPayment;
+import com.quickgas.entity.User;
 import com.quickgas.repository.DriverPaymentRepository;
+import com.quickgas.repository.UserRepository;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Transfer;
@@ -16,9 +18,7 @@ import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @Service
@@ -29,6 +29,7 @@ public class DriverPaymentService {
     private String stripeSecretKey;
     
     private final DriverPaymentRepository driverPaymentRepository;
+    private final UserRepository userRepository;
     
     // Driver gets 80% of order total
     private static final double DRIVER_PAYMENT_PERCENTAGE = 0.80;
@@ -80,7 +81,52 @@ public class DriverPaymentService {
         log.info("Created driver payment: paymentId={}, driverId={}, orderId={}, amount={}", 
                 payment.getId(), driverId, orderId, driverAmount);
         
+        // Attempt automatic payout if driver has Stripe Connect account
+        attemptAutomaticPayout(payment);
+        
         return payment;
+    }
+    
+    /**
+     * Attempt automatic payout if driver has Stripe Connect account ID
+     * This method does not throw exceptions - failures are logged but don't block payment creation
+     */
+    private void attemptAutomaticPayout(DriverPayment payment) {
+        try {
+            // Fetch driver's Stripe account ID from database
+            User driver = userRepository.findById(payment.getDriverId()).orElse(null);
+            
+            if (driver == null) {
+                log.warn("Driver not found for automatic payout: driverId={}", payment.getDriverId());
+                return;
+            }
+            
+            String stripeAccountId = driver.getStripeAccountId();
+            
+            if (stripeAccountId == null || stripeAccountId.isEmpty()) {
+                log.info("Driver does not have Stripe Connect account set up: driverId={}, paymentId={}", 
+                        payment.getDriverId(), payment.getId());
+                return;
+            }
+            
+            // Attempt to process payout
+            log.info("Attempting automatic payout: paymentId={}, driverId={}, stripeAccountId={}", 
+                    payment.getId(), payment.getDriverId(), stripeAccountId);
+            
+            processDriverPayout(payment.getId(), stripeAccountId);
+            
+            log.info("Automatic payout successful: paymentId={}, transferId={}", 
+                    payment.getId(), payment.getStripeTransferId());
+            
+        } catch (StripeException e) {
+            log.error("Automatic payout failed (Stripe error): paymentId={}, error={}", 
+                    payment.getId(), e.getMessage());
+            // Payment remains in "pending" status for manual retry
+        } catch (Exception e) {
+            log.error("Automatic payout failed (unexpected error): paymentId={}, error={}", 
+                    payment.getId(), e.getMessage(), e);
+            // Payment remains in "pending" status for manual retry
+        }
     }
     
     /**

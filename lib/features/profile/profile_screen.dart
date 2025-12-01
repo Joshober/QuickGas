@@ -8,6 +8,8 @@ import '../../core/animations/page_transitions.dart';
 import 'edit_profile_screen.dart';
 import 'payment_methods_screen.dart';
 import 'settings_screen.dart';
+import '../payments/driver_payments_screen.dart';
+import 'stripe_connect_screen.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -163,6 +165,50 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
+                // Driver-specific options
+                if (profile.role == AppConstants.roleDriver || profile.role == AppConstants.roleBoth) ...[
+                  Text(
+                    'Driver',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.payments),
+                          title: const Text('Payment History'),
+                          subtitle: const Text('View your earnings and payment history'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              PageTransitions.slideTransition(
+                                const DriverPaymentsScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                        const Divider(),
+                        ListTile(
+                          leading: const Icon(Icons.account_circle),
+                          title: const Text('Stripe Connect Setup'),
+                          subtitle: const Text('Connect your Stripe account for payouts'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              PageTransitions.slideTransition(
+                                const StripeConnectScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
 
                 SizedBox(
                   width: double.infinity,
