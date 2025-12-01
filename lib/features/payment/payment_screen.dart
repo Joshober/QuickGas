@@ -4,6 +4,7 @@ import 'package:flutter_stripe/flutter_stripe.dart' hide Card;
 import '../../core/theme/app_theme.dart';
 import '../../core/constants/api_keys.dart';
 import '../../services/payment_service.dart';
+import '../../services/payment_error.dart';
 import '../../core/providers/auth_provider.dart';
 
 class PaymentScreen extends ConsumerStatefulWidget {
@@ -30,6 +31,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   final _cardHolderNameController = TextEditingController();
 
   bool _isProcessing = false;
+  bool _isAuthenticating = false;
   String? _errorMessage;
   CardFormEditController? _cardFormController;
 
@@ -50,12 +52,29 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   Future<void> _processPayment() async {
+    // Validate amount
+    if (widget.amount <= 0) {
+      setState(() {
+        _errorMessage = 'Invalid payment amount';
+      });
+      return;
+    }
+
     if (!_cardFormKey.currentState!.validate()) {
+      return;
+    }
+
+    // Check if card form is valid
+    if (_cardFormController == null) {
+      setState(() {
+        _errorMessage = 'Card form not initialized';
+      });
       return;
     }
 
     setState(() {
       _isProcessing = true;
+      _isAuthenticating = false;
       _errorMessage = null;
     });
 
@@ -91,6 +110,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       }
       paymentService.setBackendUrl(backendUrl);
 
+      // Generate idempotency key from order ID
+      final idempotencyKey = 'order_${widget.orderId}_${DateTime.now().millisecondsSinceEpoch}';
+
       // Create payment intent
       final clientSecret = await paymentService.createPaymentIntent(
         amount: widget.amount,
@@ -98,28 +120,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         metadata: {
           'orderId': widget.orderId,
         },
+        idempotencyKey: idempotencyKey,
       );
 
-      // Check if payment intent creation failed (backend unavailable)
-      if (clientSecret == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Unable to connect to payment service. Please try again later or use cash payment.'),
-              duration: Duration(seconds: 5),
-            ),
-          );
-        }
-        return;
-      }
-
-      // Check if card form is valid
-      if (_cardFormController == null) {
-        throw Exception('Card form not initialized');
-      }
+      // Payment intent ID can be extracted from clientSecret if needed for cancellation
 
       // Create payment method using card form
-      // The CardFormField handles card input validation
+      // CardFormField automatically handles card input
       final paymentMethodParams = PaymentMethodParams.card(
         paymentMethodData: PaymentMethodData(
           billingDetails: BillingDetails(
@@ -131,14 +138,30 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       );
 
       // Confirm payment
-      await paymentService.confirmPayment(
-        paymentIntentClientSecret: clientSecret,
-        params: paymentMethodParams,
-      );
+      PaymentIntent paymentIntent;
+      try {
+        paymentIntent = await paymentService.confirmPayment(
+          paymentIntentClientSecret: clientSecret,
+          params: paymentMethodParams,
+        );
+      } catch (e) {
+        // Check if payment requires action (3D Secure)
+        if (e is PaymentError && e.type == PaymentErrorType.payment) {
+          // Try to retrieve payment intent to check if it requires action
+          try {
+            final retrievedIntent = await Stripe.instance.retrievePaymentIntent(clientSecret);
+            if (retrievedIntent.status == PaymentIntentsStatus.RequiresAction) {
+              // Handle 3D Secure authentication
+              return await _handle3DSecure(clientSecret, paymentService);
+            }
+          } catch (_) {
+            // Fall through to error handling
+          }
+        }
+        rethrow;
+      }
 
-      // Get payment intent to check status
-      final paymentIntent = await Stripe.instance.retrievePaymentIntent(clientSecret);
-
+      // Check payment status
       if (paymentIntent.status == PaymentIntentsStatus.Succeeded) {
         if (mounted) {
           Navigator.of(context).pop({
@@ -146,16 +169,78 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
             'paymentIntentId': paymentIntent.id,
           });
         }
+      } else if (paymentIntent.status == PaymentIntentsStatus.RequiresAction) {
+        // Handle 3D Secure
+        await _handle3DSecure(clientSecret, paymentService);
       } else {
-        throw Exception('Payment not completed: ${paymentIntent.status}');
+        throw PaymentError.payment('Payment not completed: ${paymentIntent.status}');
       }
+    } on PaymentError catch (e) {
+      setState(() {
+        _errorMessage = e.userFriendlyMessage;
+      });
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _errorMessage = 'An unexpected error occurred. Please try again.';
       });
     } finally {
       if (mounted) {
-        setState(() => _isProcessing = false);
+        setState(() {
+          _isProcessing = false;
+          _isAuthenticating = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _handle3DSecure(String clientSecret, PaymentService paymentService) async {
+    setState(() {
+      _isAuthenticating = true;
+      _errorMessage = null;
+    });
+
+    try {
+      // Retrieve payment intent to get the action
+      final paymentIntent = await Stripe.instance.retrievePaymentIntent(clientSecret);
+      
+      if (paymentIntent.status != PaymentIntentsStatus.RequiresAction) {
+        throw PaymentError.payment('Payment does not require authentication');
+      }
+
+      final nextAction = paymentIntent.nextAction;
+      if (nextAction == null) {
+        throw PaymentError.payment('No authentication action available');
+      }
+
+      // Handle the authentication
+      final authenticatedIntent = await paymentService.handlePaymentAction(
+        paymentIntentClientSecret: clientSecret,
+      );
+
+      // Check final status
+      if (authenticatedIntent.status == PaymentIntentsStatus.Succeeded) {
+        if (mounted) {
+          Navigator.of(context).pop({
+            'success': true,
+            'paymentIntentId': authenticatedIntent.id,
+          });
+        }
+      } else {
+        throw PaymentError.payment('Authentication failed: ${authenticatedIntent.status}');
+      }
+    } on PaymentError catch (e) {
+      setState(() {
+        _errorMessage = e.userFriendlyMessage;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Authentication failed. Please try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAuthenticating = false;
+        });
       }
     }
   }
@@ -269,20 +354,32 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
               // Pay Button
               ElevatedButton(
-                onPressed: _isProcessing ? null : _processPayment,
+                onPressed: (_isProcessing || _isAuthenticating) ? null : _processPayment,
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   backgroundColor: AppTheme.primaryColor,
                   foregroundColor: Colors.white,
                 ),
-                child: _isProcessing
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
+                child: (_isProcessing || _isAuthenticating)
+                    ? Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                          if (_isAuthenticating) ...[
+                            const SizedBox(width: 12),
+                            const Text(
+                              'Authenticating...',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ],
                       )
                     : Text(
                         'Pay \$${widget.amount.toStringAsFixed(2)}',

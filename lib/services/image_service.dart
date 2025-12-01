@@ -8,9 +8,6 @@ class ImageService {
   // Target size: ~500KB to stay under Firestore's 1MB limit
   static Future<String> compressAndEncodeImage(File imageFile) async {
     try {
-      // Read original image
-      final originalBytes = await imageFile.readAsBytes();
-      
       // Compress image
       final compressedBytes = await FlutterImageCompress.compressWithFile(
         imageFile.absolute.path,
@@ -37,7 +34,7 @@ class ImageService {
           minHeight: 720,
           quality: 50, // Lower quality for smaller size
           format: CompressFormat.jpeg,
-        ) ?? compressedBytes;
+        );
       }
 
       // Encode to base64

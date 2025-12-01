@@ -1,5 +1,7 @@
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:dio/dio.dart';
+import 'dart:async';
+import 'payment_error.dart';
 
 class PaymentService {
   void setPublishableKey(String key) {
@@ -14,57 +16,172 @@ class PaymentService {
 
   bool get isBackendAvailable => _backendUrl != null;
 
-  Future<String?> createPaymentIntent({
+  /// Extracts payment intent ID from client secret
+  /// Format: pi_xxx_secret_xxx -> pi_xxx
+  String? extractPaymentIntentId(String clientSecret) {
+    try {
+      final parts = clientSecret.split('_secret_');
+      if (parts.isNotEmpty) {
+        return parts[0];
+      }
+    } catch (e) {
+      // Invalid format
+    }
+    return null;
+  }
+
+  /// Creates a payment intent with retry logic
+  Future<String> createPaymentIntent({
     required double amount,
     required String currency,
     Map<String, dynamic>? metadata,
+    String? idempotencyKey,
+    int maxRetries = 3,
   }) async {
     if (_backendUrl == null) {
-      return null; // Backend not available, return null instead of throwing
+      throw PaymentError.configuration('Backend URL not configured');
     }
 
-    try {
-      final dio = Dio();
-      dio.options.connectTimeout = const Duration(seconds: 5);
-      dio.options.receiveTimeout = const Duration(seconds: 5);
-      
-      final response = await dio.post(
-        '$_backendUrl/api/payments/create-intent',
-        data: {
+    // Validate amount
+    if (amount <= 0) {
+      throw PaymentError.validation('Amount must be greater than 0');
+    }
+
+    // Validate currency
+    if (currency.isEmpty || currency.length != 3) {
+      throw PaymentError.validation('Invalid currency code');
+    }
+
+    int attempt = 0;
+    while (attempt < maxRetries) {
+      try {
+        final dio = Dio();
+        dio.options.connectTimeout = const Duration(seconds: 10);
+        dio.options.receiveTimeout = const Duration(seconds: 10);
+        
+        final requestData = {
           'amount': amount,
-          'currency': currency,
+          'currency': currency.toLowerCase(),
           'metadata': metadata ?? {},
-        },
-      );
+        };
+        
+        if (idempotencyKey != null && idempotencyKey.isNotEmpty) {
+          requestData['idempotencyKey'] = idempotencyKey;
+        }
+        
+        final response = await dio.post(
+          '$_backendUrl/api/payments/create-intent',
+          data: requestData,
+        );
 
-      return response.data['clientSecret'] as String;
-    } catch (e) {
-      // Backend unavailable, return null
-      return null;
+        if (response.statusCode == 200 && response.data != null) {
+          final clientSecret = response.data['clientSecret'] as String?;
+          if (clientSecret != null && clientSecret.isNotEmpty) {
+            return clientSecret;
+          }
+          throw PaymentError.unknown('Invalid response from server: missing clientSecret');
+        } else {
+          throw PaymentError.network('Invalid response from server: ${response.statusCode}');
+        }
+      } on DioException catch (e) {
+        attempt++;
+        
+        // Check if it's a validation error (400)
+        if (e.response?.statusCode == 400) {
+          final errorData = e.response?.data;
+          final errorMessage = errorData is Map 
+              ? (errorData['error'] as String? ?? 'Validation error')
+              : 'Validation error';
+          throw PaymentError.validation(errorMessage);
+        }
+        
+        // Check if it's a payment error (402)
+        if (e.response?.statusCode == 402) {
+          final errorData = e.response?.data;
+          final errorMessage = errorData is Map 
+              ? (errorData['error'] as String? ?? 'Payment failed')
+              : 'Payment failed';
+          final errorCode = errorData is Map ? errorData['code'] as String? : null;
+          throw PaymentError.payment(errorMessage, errorCode, e);
+        }
+        
+        // Network errors - retry with exponential backoff
+        if (e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.receiveTimeout ||
+            e.type == DioExceptionType.connectionError) {
+          if (attempt >= maxRetries) {
+            throw PaymentError.network(
+              'Unable to connect to payment service. Please check your connection.',
+              e,
+            );
+          }
+          // Exponential backoff: 1s, 2s, 4s
+          await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
+          continue;
+        }
+        
+        // Other errors
+        if (attempt >= maxRetries) {
+          throw PaymentError.network(
+            'Payment service error: ${e.message ?? 'Unknown error'}',
+            e,
+          );
+        }
+        
+        await Future.delayed(Duration(seconds: 1 << (attempt - 1)));
+      } catch (e) {
+        if (e is PaymentError) {
+          rethrow;
+        }
+        throw PaymentError.unknown('Unexpected error: ${e.toString()}', e);
+      }
     }
+    
+    throw PaymentError.network('Failed to create payment intent after $maxRetries attempts');
   }
 
+  /// Confirms payment and handles 3D Secure authentication
   Future<PaymentIntent> confirmPayment({
     required String paymentIntentClientSecret,
     required PaymentMethodParams params,
   }) async {
     try {
       // Confirm payment using Stripe SDK
-      await Stripe.instance.confirmPayment(
+      final paymentIntent = await Stripe.instance.confirmPayment(
         paymentIntentClientSecret: paymentIntentClientSecret,
         data: params,
       );
 
-      // Retrieve payment intent to get status
-      final paymentIntent = await Stripe.instance.retrievePaymentIntent(
+      return paymentIntent;
+    } on StripeException catch (e) {
+      final errorCode = e.error.code.toString();
+      final errorMessage = e.error.message ?? 'Payment failed';
+      
+      throw PaymentError.payment(errorMessage, errorCode, e);
+    } catch (e) {
+      if (e is PaymentError) {
+        rethrow;
+      }
+      throw PaymentError.unknown('Payment confirmation failed: ${e.toString()}', e);
+    }
+  }
+
+  /// Handles payment that requires action (3D Secure)
+  Future<PaymentIntent> handlePaymentAction({
+    required String paymentIntentClientSecret,
+  }) async {
+    try {
+      final paymentIntent = await Stripe.instance.handleNextAction(
         paymentIntentClientSecret,
       );
 
       return paymentIntent;
     } on StripeException catch (e) {
-      throw Exception('Payment failed: ${e.error.message}');
+      final errorMessage = e.error.message ?? 'Authentication failed';
+      
+      throw PaymentError.authentication(errorMessage);
     } catch (e) {
-      throw Exception('Payment failed: $e');
+      throw PaymentError.unknown('Payment action handling failed: ${e.toString()}', e);
     }
   }
 
@@ -78,17 +195,17 @@ class PaymentService {
 
       return paymentMethod;
     } on StripeException catch (e) {
-      throw Exception('Failed to create payment method: ${e.error.message}');
+      final errorCode = e.error.code.toString();
+      final errorMessage = e.error.message ?? 'Failed to create payment method';
+      
+      throw PaymentError.payment(errorMessage, errorCode, e);
     } catch (e) {
-      throw Exception('Failed to create payment method: $e');
+      throw PaymentError.unknown('Failed to create payment method: ${e.toString()}', e);
     }
   }
 
   Future<bool> handlePaymentSuccess(PaymentIntent paymentIntent) async {
-    if (paymentIntent.status == PaymentIntentsStatus.Succeeded) {
-      return true;
-    }
-    return false;
+    return paymentIntent.status == PaymentIntentsStatus.Succeeded;
   }
 
   Future<bool> cancelPaymentIntent(String paymentIntentId) async {
@@ -106,8 +223,11 @@ class PaymentService {
         data: {'paymentIntentId': paymentIntentId},
       );
       return true;
-    } catch (e) {
-      return false; // Backend unavailable
+    } on DioException {
+      // Log error but don't throw - cancellation is best effort
+      return false;
+    } catch (_) {
+      return false;
     }
   }
 }

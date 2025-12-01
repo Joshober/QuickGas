@@ -46,4 +46,29 @@ class AppConstants {
   static double calculateOrderTotal(double gasQuantity) {
     return (gasQuantity * pricePerGallon) + deliveryFee;
   }
+
+  // Payment Validation
+  static const double minPaymentAmount = 0.50; // Minimum payment amount in USD
+  static const double maxPaymentAmount = 10000.00; // Maximum payment amount in USD
+  static const List<String> supportedCurrencies = [
+    'usd',
+    'eur',
+    'gbp',
+    'cad',
+    'aud',
+    'jpy',
+    'chf',
+    'nzd',
+    'sek',
+    'nok',
+    'dkk',
+  ];
+
+  static bool isValidPaymentAmount(double amount) {
+    return amount >= minPaymentAmount && amount <= maxPaymentAmount;
+  }
+
+  static bool isSupportedCurrency(String currency) {
+    return supportedCurrencies.contains(currency.toLowerCase());
+  }
 }

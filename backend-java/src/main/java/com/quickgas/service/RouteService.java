@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -38,6 +37,7 @@ public class RouteService {
         requestBody.put("locations", request.getLocations());
         requestBody.put("metrics", new String[]{"distance", "duration"});
         
+        @SuppressWarnings("unchecked")
         Map<String, Object> response = webClient.post()
             .uri("/matrix/driving-car")
             .header("Authorization", "Bearer " + apiKey)
