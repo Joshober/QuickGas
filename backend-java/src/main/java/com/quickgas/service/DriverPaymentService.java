@@ -6,7 +6,11 @@ import com.quickgas.repository.DriverPaymentRepository;
 import com.quickgas.repository.UserRepository;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
+import com.stripe.model.Account;
+import com.stripe.model.AccountLink;
 import com.stripe.model.Transfer;
+import com.stripe.param.AccountCreateParams;
+import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.TransferCreateParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +34,7 @@ public class DriverPaymentService {
     
     private final DriverPaymentRepository driverPaymentRepository;
     private final UserRepository userRepository;
+    private final SecurityService securityService;
     
     // Driver gets 80% of order total
     private static final double DRIVER_PAYMENT_PERCENTAGE = 0.80;
@@ -61,10 +66,25 @@ public class DriverPaymentService {
             String currency,
             String routeId) {
         
+        // Security validation
+        try {
+            securityService.validatePaymentAmount(orderTotal, driverId);
+            securityService.checkRateLimit(driverId, "/api/driver-payments");
+            securityService.detectSuspiciousActivity(driverId, orderTotal, orderId);
+        } catch (SecurityService.SecurityException e) {
+            securityService.logSecurityEvent("DRIVER_PAYMENT_VALIDATION_FAILED", driverId, 
+                    "orderId=" + orderId + ", amount=" + orderTotal + ", reason=" + e.getMessage());
+            throw e;
+        }
+        
         // Calculate driver payment (80% of order total)
         BigDecimal driverAmount = orderTotal
                 .multiply(BigDecimal.valueOf(DRIVER_PAYMENT_PERCENTAGE))
                 .setScale(2, RoundingMode.HALF_UP);
+        
+        // Log security event
+        securityService.logSecurityEvent("DRIVER_PAYMENT_CREATED", driverId, 
+                "orderId=" + orderId + ", amount=" + driverAmount);
         
         DriverPayment payment = DriverPayment.builder()
                 .driverId(driverId)
@@ -203,6 +223,61 @@ public class DriverPaymentService {
     public DriverPayment getPaymentByOrderId(String orderId) {
         return driverPaymentRepository.findByOrderId(orderId)
                 .orElse(null);
+    }
+    
+    /**
+     * Create a Stripe Connect Express account for a driver
+     */
+    public Account createStripeConnectAccount(String driverId, String email, String country) 
+            throws StripeException {
+        
+        AccountCreateParams params = AccountCreateParams.builder()
+                .setType(AccountCreateParams.Type.EXPRESS)
+                .setCountry(country != null ? country : "US")
+                .setEmail(email)
+                .putMetadata("driverId", driverId)
+                .setCapabilities(
+                    AccountCreateParams.Capabilities.builder()
+                        .setTransfers(
+                            AccountCreateParams.Capabilities.Transfers.builder()
+                                .setRequested(true)
+                                .build()
+                        )
+                        .build()
+                )
+                .build();
+        
+        Account account = Account.create(params);
+        log.info("Created Stripe Connect Express account: accountId={}, driverId={}", 
+                account.getId(), driverId);
+        
+        return account;
+    }
+    
+    /**
+     * Create an account link for onboarding or login
+     */
+    public String createAccountLink(String accountId, String returnUrl, String refreshUrl) 
+            throws StripeException {
+        
+        AccountLinkCreateParams params = AccountLinkCreateParams.builder()
+                .setAccount(accountId)
+                .setRefreshUrl(refreshUrl)
+                .setReturnUrl(returnUrl)
+                .setType(AccountLinkCreateParams.Type.ACCOUNT_ONBOARDING)
+                .build();
+        
+        AccountLink accountLink = AccountLink.create(params);
+        log.info("Created account link: accountId={}, url={}", accountId, accountLink.getUrl());
+        
+        return accountLink.getUrl();
+    }
+    
+    /**
+     * Get account details
+     */
+    public Account getAccount(String accountId) throws StripeException {
+        return Account.retrieve(accountId);
     }
 }
 

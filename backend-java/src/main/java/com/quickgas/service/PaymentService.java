@@ -5,6 +5,7 @@ import com.quickgas.dto.PaymentIntentResponse;
 import com.quickgas.entity.PaymentTransaction;
 import com.quickgas.exception.ValidationException;
 import com.quickgas.repository.PaymentTransactionRepository;
+import com.quickgas.service.SecurityService;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
@@ -32,6 +33,7 @@ public class PaymentService {
     private String stripeSecretKey;
     
     private final PaymentTransactionRepository paymentTransactionRepository;
+    private final SecurityService securityService;
     
     // Supported currencies (ISO 4217 codes)
     private static final Set<String> SUPPORTED_CURRENCIES = Set.of(
@@ -63,6 +65,21 @@ public class PaymentService {
         // Validate amount
         if (request.getAmount() == null || request.getAmount() <= 0) {
             throw new ValidationException("Amount must be greater than 0");
+        }
+        
+        // Security validation: amount limits and rate limiting
+        BigDecimal amount = BigDecimal.valueOf(request.getAmount());
+        String userId = request.getMetadata() != null ? request.getMetadata().get("userId") : "unknown";
+        
+        try {
+            securityService.validatePaymentAmount(amount, userId);
+            securityService.checkRateLimit(userId, "/api/payments/create-intent");
+            securityService.detectSuspiciousActivity(userId, amount, 
+                    request.getMetadata() != null ? request.getMetadata().get("orderId") : null);
+        } catch (SecurityService.SecurityException e) {
+            securityService.logSecurityEvent("PAYMENT_VALIDATION_FAILED", userId, 
+                    "amount=" + amount + ", reason=" + e.getMessage());
+            throw e;
         }
         
         // Check for duplicate payment intent using idempotency key

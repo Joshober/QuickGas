@@ -110,6 +110,84 @@ class BackendService {
     }
   }
 
+  Future<Map<String, dynamic>?> createStripeConnectAccount({
+    required String driverId,
+    required String email,
+    String country = 'US',
+  }) async {
+    if (_baseUrl == null || !_isAvailable) {
+      return null;
+    }
+
+    try {
+      final response = await _dio.post(
+        '/api/driver-payments/connect/create-account',
+        data: {
+          'driverId': driverId,
+          'email': email,
+          'country': country,
+        },
+      );
+
+      if (response.data['success'] == true) {
+        return response.data;
+      }
+      return null;
+    } catch (e) {
+      print('Failed to create Stripe Connect account: $e');
+      return null;
+    }
+  }
+
+  Future<String?> createAccountLink({
+    required String accountId,
+    required String returnUrl,
+    required String refreshUrl,
+  }) async {
+    if (_baseUrl == null || !_isAvailable) {
+      return null;
+    }
+
+    try {
+      final response = await _dio.post(
+        '/api/driver-payments/connect/create-link',
+        data: {
+          'accountId': accountId,
+          'returnUrl': returnUrl,
+          'refreshUrl': refreshUrl,
+        },
+      );
+
+      if (response.data['success'] == true) {
+        return response.data['url'] as String?;
+      }
+      return null;
+    } catch (e) {
+      print('Failed to create account link: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getStripeAccount(String accountId) async {
+    if (_baseUrl == null || !_isAvailable) {
+      return null;
+    }
+
+    try {
+      final response = await _dio.get(
+        '/api/driver-payments/connect/account/$accountId',
+      );
+
+      if (response.data['success'] == true) {
+        return response.data;
+      }
+      return null;
+    } catch (e) {
+      print('Failed to get Stripe account: $e');
+      return null;
+    }
+  }
+
   Future<bool> sendNotification({
     required String fcmToken,
     required String title,

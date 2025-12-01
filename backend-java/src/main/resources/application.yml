@@ -65,3 +65,13 @@ cors:
   allowed-headers: "*"
   allow-credentials: true
 
+# Security Configuration
+security:
+  payment:
+    min-amount: ${SECURITY_MIN_AMOUNT:0.50}
+    max-amount: ${SECURITY_MAX_AMOUNT:10000.00}
+    max-daily-amount: ${SECURITY_MAX_DAILY_AMOUNT:50000.00}
+  rate-limit:
+    enabled: ${SECURITY_RATE_LIMIT_ENABLED:true}
+    max-requests-per-minute: ${SECURITY_RATE_LIMIT_MAX:60}
+

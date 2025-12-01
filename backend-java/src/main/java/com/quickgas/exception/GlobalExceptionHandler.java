@@ -1,5 +1,6 @@
 package com.quickgas.exception;
 
+import com.quickgas.service.SecurityService;
 import com.stripe.exception.StripeException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -15,6 +16,15 @@ import java.util.Map;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    
+    @ExceptionHandler(SecurityService.SecurityException.class)
+    public ResponseEntity<Map<String, Object>> handleSecurityException(SecurityService.SecurityException e) {
+        log.warn("Security violation: {}", e.getMessage());
+        Map<String, Object> response = new HashMap<>();
+        response.put("error", e.getMessage());
+        response.put("type", "security_error");
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+    }
     
     @ExceptionHandler(ValidationException.class)
     public ResponseEntity<Map<String, Object>> handleValidationException(ValidationException e) {

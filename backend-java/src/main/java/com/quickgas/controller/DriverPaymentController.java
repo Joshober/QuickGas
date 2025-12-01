@@ -2,12 +2,15 @@ package com.quickgas.controller;
 
 import com.quickgas.entity.DriverPayment;
 import com.quickgas.service.DriverPaymentService;
+import com.quickgas.service.SecurityService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import com.stripe.exception.StripeException;
+import com.stripe.model.Account;
+import jakarta.servlet.http.HttpServletRequest;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -19,20 +22,28 @@ import java.util.Map;
 public class DriverPaymentController {
     
     private final DriverPaymentService driverPaymentService;
+    private final SecurityService securityService;
     
     @PostMapping
-    public ResponseEntity<?> createDriverPayment(@RequestBody Map<String, Object> request) {
+    public ResponseEntity<?> createDriverPayment(
+            @RequestBody Map<String, Object> request,
+            HttpServletRequest httpRequest) {
         try {
             String driverId = (String) request.get("driverId");
             String orderId = (String) request.get("orderId");
             BigDecimal orderTotal = new BigDecimal(request.get("orderTotal").toString());
             String currency = (String) request.getOrDefault("currency", "usd");
             String routeId = (String) request.get("routeId");
+            String clientIp = httpRequest.getRemoteAddr();
             
             if (driverId == null || orderId == null || orderTotal == null) {
                 return ResponseEntity.badRequest()
                     .body(Map.of("error", "driverId, orderId, and orderTotal are required"));
             }
+            
+            // Log security event
+            securityService.logSecurityEvent("DRIVER_PAYMENT_CREATE_REQUEST", driverId, 
+                    "orderId=" + orderId + ", amount=" + orderTotal + ", ip=" + clientIp);
             
             DriverPayment payment = driverPaymentService.createDriverPayment(
                     driverId, orderId, orderTotal, currency, routeId);
@@ -110,6 +121,91 @@ public class DriverPaymentController {
             ));
         } catch (Exception e) {
             log.error("Get driver payments by status error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    @PostMapping("/connect/create-account")
+    public ResponseEntity<?> createConnectAccount(@RequestBody Map<String, String> request) {
+        try {
+            String driverId = request.get("driverId");
+            String email = request.get("email");
+            String country = request.getOrDefault("country", "US");
+            
+            if (driverId == null || email == null) {
+                return ResponseEntity.badRequest()
+                    .body(Map.of("error", "driverId and email are required"));
+            }
+            
+            Account account = driverPaymentService.createStripeConnectAccount(driverId, email, country);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "accountId", account.getId(),
+                "detailsSubmitted", account.getDetailsSubmitted(),
+                "chargesEnabled", account.getChargesEnabled(),
+                "payoutsEnabled", account.getPayoutsEnabled()
+            ));
+        } catch (StripeException e) {
+            log.error("Stripe Connect account creation error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", "Stripe error: " + e.getMessage()));
+        } catch (Exception e) {
+            log.error("Connect account creation error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    @PostMapping("/connect/create-link")
+    public ResponseEntity<?> createAccountLink(@RequestBody Map<String, String> request) {
+        try {
+            String accountId = request.get("accountId");
+            String returnUrl = request.get("returnUrl");
+            String refreshUrl = request.get("refreshUrl");
+            
+            if (accountId == null || returnUrl == null || refreshUrl == null) {
+                return ResponseEntity.badRequest()
+                    .body(Map.of("error", "accountId, returnUrl, and refreshUrl are required"));
+            }
+            
+            String linkUrl = driverPaymentService.createAccountLink(accountId, returnUrl, refreshUrl);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "url", linkUrl
+            ));
+        } catch (StripeException e) {
+            log.error("Stripe account link creation error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", "Stripe error: " + e.getMessage()));
+        } catch (Exception e) {
+            log.error("Account link creation error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    @GetMapping("/connect/account/{accountId}")
+    public ResponseEntity<?> getAccount(@PathVariable String accountId) {
+        try {
+            Account account = driverPaymentService.getAccount(accountId);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "accountId", account.getId(),
+                "detailsSubmitted", account.getDetailsSubmitted(),
+                "chargesEnabled", account.getChargesEnabled(),
+                "payoutsEnabled", account.getPayoutsEnabled(),
+                "email", account.getEmail() != null ? account.getEmail() : ""
+            ));
+        } catch (StripeException e) {
+            log.error("Get Stripe account error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", "Stripe error: " + e.getMessage()));
+        } catch (Exception e) {
+            log.error("Get account error: {}", e.getMessage());
             return ResponseEntity.status(500)
                 .body(Map.of("error", e.getMessage()));
         }

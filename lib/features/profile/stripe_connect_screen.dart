@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/providers/auth_provider.dart';
 
@@ -11,10 +12,9 @@ class StripeConnectScreen extends ConsumerStatefulWidget {
 }
 
 class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _accountIdController = TextEditingController();
   bool _isLoading = false;
   String? _currentAccountId;
+  bool _isOnboardingComplete = false;
 
   @override
   void initState() {
@@ -32,50 +32,93 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
 
       setState(() {
         _currentAccountId = accountId;
-        if (accountId != null) {
-          _accountIdController.text = accountId;
-        }
+        _isOnboardingComplete = accountId != null;
       });
     } catch (e) {
       print('Error loading Stripe account ID: $e');
     }
   }
 
-  Future<void> _saveAccountId() async {
-    if (!_formKey.currentState!.validate()) return;
-
+  Future<void> _startOnboarding() async {
     setState(() => _isLoading = true);
 
     try {
       final authState = ref.read(authStateProvider);
+      final backendService = ref.read(backendServiceProvider);
+      final firebaseService = ref.read(firebaseServiceProvider);
+
       if (authState.value == null) {
         throw Exception('User not authenticated');
       }
 
-      final firebaseService = ref.read(firebaseServiceProvider);
-      final accountId = _accountIdController.text.trim();
+      if (backendService == null || !backendService.isAvailable) {
+        throw Exception('Backend service not available');
+      }
 
-      await firebaseService.updateUserStripeAccountId(
-        authState.value!.uid,
-        accountId.isEmpty ? null : accountId,
+      final userProfile = await firebaseService.getUserProfile(authState.value!.uid);
+      if (userProfile == null) {
+        throw Exception('User profile not found');
+      }
+
+      // Check if account already exists
+      String? accountId = _currentAccountId;
+      
+      if (accountId == null) {
+        // Create new Stripe Connect Express account
+        final accountData = await backendService.createStripeConnectAccount(
+          driverId: authState.value!.uid,
+          email: userProfile.email,
+          country: 'US',
+        );
+
+        if (accountData == null || accountData['accountId'] == null) {
+          throw Exception('Failed to create Stripe account');
+        }
+
+        accountId = accountData['accountId'] as String;
+        
+        // Save account ID to Firestore
+        await firebaseService.updateUserStripeAccountId(
+          authState.value!.uid,
+          accountId,
+        );
+      }
+
+      // Create account link for onboarding
+      final returnUrl = 'quickgas://stripe-connect-return';
+      final refreshUrl = 'quickgas://stripe-connect-refresh';
+      
+      final linkUrl = await backendService.createAccountLink(
+        accountId: accountId,
+        returnUrl: returnUrl,
+        refreshUrl: refreshUrl,
       );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Stripe account ID saved successfully'),
-            backgroundColor: AppTheme.successColor,
-          ),
-        );
-        setState(() {
-          _currentAccountId = accountId.isEmpty ? null : accountId;
-        });
+      if (linkUrl == null) {
+        throw Exception('Failed to create account link');
+      }
+
+      // Open onboarding URL
+      final uri = Uri.parse(linkUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Complete onboarding in the browser, then return to the app'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+      } else {
+        throw Exception('Could not launch onboarding URL');
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to save: $e'),
+            content: Text('Failed to start onboarding: $e'),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -88,12 +131,6 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
   }
 
   @override
-  void dispose() {
-    _accountIdController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -101,11 +138,9 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -129,8 +164,8 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Enter your Stripe Connect account ID to receive automatic payouts. '
-                        'This ID is provided when you set up your Stripe Connect account.',
+                        'Connect your Stripe account to receive automatic payouts. '
+                        'Click the button below to complete onboarding securely through Stripe.',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.grey[700],
                         ),
@@ -140,27 +175,9 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              TextFormField(
-                controller: _accountIdController,
-                decoration: const InputDecoration(
-                  labelText: 'Stripe Connect Account ID',
-                  hintText: 'acct_xxxxxxxxxxxxx',
-                  prefixIcon: Icon(Icons.account_circle),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value != null && value.trim().isNotEmpty) {
-                    if (!value.trim().startsWith('acct_')) {
-                      return 'Stripe account ID should start with "acct_"';
-                    }
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              if (_currentAccountId != null) ...[
+              if (_isOnboardingComplete) ...[
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: AppTheme.successColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
@@ -173,50 +190,108 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
                       Icon(
                         Icons.check_circle,
                         color: AppTheme.successColor,
-                        size: 20,
+                        size: 32,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 16),
                       Expanded(
-                        child: Text(
-                          'Current account: ${_currentAccountId!.substring(0, 12)}...',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppTheme.successColor,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Account Connected',
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.successColor,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Your Stripe account is set up and ready to receive payouts.',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 24),
               ],
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _saveAccountId,
+                child: ElevatedButton.icon(
+                  onPressed: _isLoading ? null : _startOnboarding,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryColor,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
-                  child: _isLoading
+                  icon: _isLoading
                       ? const SizedBox(
-                          height: 20,
                           width: 20,
+                          height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
                             valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                         )
-                      : const Text(
-                          'Save Account ID',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                      : const Icon(Icons.account_circle),
+                  label: Text(
+                    _isOnboardingComplete 
+                        ? 'Update Account Settings'
+                        : 'Connect Stripe Account',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 24),
+              Card(
+                color: Colors.orange[50],
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.lightbulb_outline,
+                            color: Colors.blue[700],
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Important: Why Stripe Connect?',
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange[900],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Drivers need to RECEIVE money (payouts), not make payments.\n\n'
+                        '• Credit cards are for PAYING, not receiving\n'
+                        '• To receive payouts, drivers need a Stripe Connect account\n'
+                        '• This is different from customers who just enter card info\n\n'
+                        'For Testing:\n'
+                        '• Use Stripe Test Mode to create test accounts\n'
+                        '• Test account IDs work the same way\n'
+                        '• No real money is transferred in test mode',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.orange[900],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
               Card(
                 color: Colors.blue[50],
                 child: Padding(
@@ -232,7 +307,7 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'How to get your Stripe Connect Account ID',
+                            'How to Get Account ID (Testing)',
                             style: Theme.of(context).textTheme.titleSmall?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: Colors.blue[900],
@@ -242,10 +317,12 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        '1. Sign up for a Stripe Connect account\n'
-                        '2. Complete the onboarding process\n'
-                        '3. Your account ID will be in the format: acct_xxxxxxxxxxxxx\n'
-                        '4. Copy and paste it here to enable automatic payouts',
+                        '1. Go to Stripe Dashboard (test mode)\n'
+                        '2. Navigate to Connect → Accounts\n'
+                        '3. Create a test connected account\n'
+                        '4. Copy the account ID (format: acct_xxxxxxxxxxxxx)\n'
+                        '5. Paste it in the field above\n\n'
+                        'For production, drivers will complete onboarding in-app.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.blue[900],
                         ),
@@ -254,8 +331,7 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
                   ),
                 ),
               ),
-            ],
-          ),
+          ],
         ),
       ),
     );
