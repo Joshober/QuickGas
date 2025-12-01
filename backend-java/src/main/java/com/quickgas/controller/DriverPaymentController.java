@@ -187,6 +187,39 @@ public class DriverPaymentController {
         }
     }
     
+    @GetMapping("/connect/return")
+    public ResponseEntity<?> handleConnectReturn(
+            @RequestParam String driverId,
+            @RequestParam(required = false) String status) {
+        // This endpoint handles the return from Stripe Connect onboarding
+        // In a mobile app, this would redirect to a deep link
+        // For now, return a simple HTML page with instructions
+        String html = "<!DOCTYPE html><html><head><title>Stripe Connect</title>" +
+                "<meta name='viewport' content='width=device-width, initial-scale=1'>" +
+                "<style>body{font-family:Arial,sans-serif;text-align:center;padding:50px;}" +
+                "h1{color:#635BFF;}p{color:#666;}</style></head><body>" +
+                "<h1>✓ Account Connected</h1>" +
+                "<p>Your Stripe account has been successfully connected.</p>" +
+                "<p>You can now close this window and return to the app.</p>" +
+                "<script>setTimeout(function(){window.close();},3000);</script>" +
+                "</body></html>";
+        return ResponseEntity.ok().header("Content-Type", "text/html").body(html);
+    }
+    
+    @GetMapping("/connect/refresh")
+    public ResponseEntity<?> handleConnectRefresh(@RequestParam String driverId) {
+        // This endpoint handles refresh requests from Stripe
+        // Redirect back to onboarding if needed
+        String html = "<!DOCTYPE html><html><head><title>Stripe Connect</title>" +
+                "<meta name='viewport' content='width=device-width, initial-scale=1'>" +
+                "<style>body{font-family:Arial,sans-serif;text-align:center;padding:50px;}" +
+                "h1{color:#635BFF;}p{color:#666;}</style></head><body>" +
+                "<h1>Please Complete Onboarding</h1>" +
+                "<p>Please complete all required information to continue.</p>" +
+                "</body></html>";
+        return ResponseEntity.ok().header("Content-Type", "text/html").body(html);
+    }
+    
     @GetMapping("/connect/account/{accountId}")
     public ResponseEntity<?> getAccount(@PathVariable String accountId) {
         try {

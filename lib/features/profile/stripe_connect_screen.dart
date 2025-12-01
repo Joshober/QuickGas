@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/providers/auth_provider.dart';
+import '../../core/constants/api_keys.dart';
 
 class StripeConnectScreen extends ConsumerStatefulWidget {
   const StripeConnectScreen({super.key});
@@ -85,8 +86,13 @@ class _StripeConnectScreenState extends ConsumerState<StripeConnectScreen> {
       }
 
       // Create account link for onboarding
-      final returnUrl = 'quickgas://stripe-connect-return';
-      final refreshUrl = 'quickgas://stripe-connect-refresh';
+      // Stripe requires HTTP/HTTPS URLs, not custom URL schemes
+      // We'll use the backend URL with redirect endpoints
+      final backendUrl = ApiKeys.backendUrl.isNotEmpty 
+          ? ApiKeys.backendUrl 
+          : 'https://backend-production-d2008.up.railway.app';
+      final returnUrl = '$backendUrl/api/driver-payments/connect/return?driverId=${authState.value!.uid}&status=success';
+      final refreshUrl = '$backendUrl/api/driver-payments/connect/refresh?driverId=${authState.value!.uid}';
       
       final linkUrl = await backendService.createAccountLink(
         accountId: accountId,
