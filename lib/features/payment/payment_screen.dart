@@ -34,11 +34,60 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   bool _isAuthenticating = false;
   String? _errorMessage;
   CardFormEditController? _cardFormController;
+  bool _stripeInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    _cardFormController = CardFormEditController();
+    _initializeStripe();
+  }
+
+  Future<void> _initializeStripe() async {
+    // Ensure Stripe is initialized before using CardFormField
+    final stripePublishableKey = ApiKeys.stripePublishableKey;
+    
+    if (stripePublishableKey.isEmpty) {
+      // If no key, show error
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Stripe publishable key not configured. Payment processing unavailable.';
+          _stripeInitialized = false;
+        });
+      }
+      return;
+    }
+    
+    // Set the publishable key if not already set
+    if (Stripe.publishableKey != stripePublishableKey) {
+      Stripe.publishableKey = stripePublishableKey;
+    }
+    
+    // Wait for Stripe SDK to initialize on native side
+    // The native SDK needs time to initialize after setting the key
+    await Future.delayed(const Duration(milliseconds: 300));
+    
+    // Now create the controller after Stripe is initialized
+    try {
+      _cardFormController = CardFormEditController();
+      
+      // Give it a bit more time to ensure everything is ready
+      await Future.delayed(const Duration(milliseconds: 100));
+      
+      if (mounted) {
+        setState(() {
+          _stripeInitialized = true;
+        });
+      }
+    } catch (e) {
+      // If controller creation fails, Stripe might not be ready yet
+      debugPrint('Error creating CardFormController: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Failed to initialize payment form. Please try again.';
+          _stripeInitialized = false;
+        });
+      }
+    }
   }
 
   @override
@@ -82,17 +131,33 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final paymentService = PaymentService();
       final backendService = ref.read(backendServiceProvider);
       
-      // Check if backend is available
-      if (backendService == null || !backendService.isAvailable) {
+      // Check if backend is available - recheck if needed
+      if (backendService == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Payment processing requires backend connection. Please try again later or use cash payment.'),
+              content: Text('Backend service not configured. Please set BACKEND_URL in environment variables.'),
               duration: Duration(seconds: 5),
             ),
           );
         }
         return;
+      }
+      
+      // Recheck availability if not already checked
+      if (!backendService.isAvailable) {
+        final isAvailable = await backendService.checkAvailability();
+        if (!isAvailable) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Payment processing requires backend connection. Please try again later or use cash payment.'),
+                duration: Duration(seconds: 5),
+              ),
+            );
+          }
+          return;
+        }
       }
 
       // Get backend URL from ApiKeys
@@ -304,16 +369,28 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               const SizedBox(height: 16),
 
               // Stripe Card Form (includes card number, expiry, CVC)
-              CardFormField(
-                controller: _cardFormController,
-                style: CardFormStyle(
-                  borderColor: Colors.grey,
-                  borderWidth: 1,
-                  borderRadius: 8,
-                  textColor: Colors.black,
-                  placeholderColor: Colors.grey,
+              if (_stripeInitialized && _cardFormController != null)
+                CardFormField(
+                  controller: _cardFormController!,
+                  style: CardFormStyle(
+                    borderColor: Colors.grey,
+                    borderWidth: 1,
+                    borderRadius: 8,
+                    textColor: Colors.black,
+                    placeholderColor: Colors.grey,
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Center(
+                    child: CircularProgressIndicator(),
+                  ),
                 ),
-              ),
               const SizedBox(height: 16),
 
               // Card Holder Name (optional but recommended)

@@ -36,7 +36,7 @@ spring:
 
 server:
   port: ${PORT:8080}
-  address: ${SERVER_ADDRESS:localhost}
+  address: ${SERVER_ADDRESS:0.0.0.0}
   base-url: ${SERVER_BASE_URL:}
   error:
     include-message: always

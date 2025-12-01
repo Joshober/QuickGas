@@ -26,12 +26,34 @@ class BackendService {
         '/health',
         options: Options(
           validateStatus: (status) => status != null && status < 500,
+          followRedirects: true,
         ),
       );
       _isAvailable = response.statusCode == 200;
+      if (!_isAvailable) {
+        // Log for debugging
+        print('Backend health check failed: status=${response.statusCode}');
+      }
       return _isAvailable;
+    } on DioException catch (e) {
+      _isAvailable = false;
+      // Log connection errors for debugging, but don't spam for expected 502 errors
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 502) {
+        // 502 is expected if backend isn't running - just set availability, don't log repeatedly
+        // The app will work in Firebase-only mode
+      } else {
+        // Log other errors for debugging
+        print('Backend connection error: ${e.type} - ${e.message}');
+        if (e.response != null) {
+          print('Response status: ${e.response?.statusCode}');
+          print('Response data: ${e.response?.data}');
+        }
+      }
+      return false;
     } catch (e) {
       _isAvailable = false;
+      print('Backend availability check error: $e');
       return false;
     }
   }

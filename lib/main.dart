@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'core/constants/backend_constants.dart';
@@ -78,7 +79,8 @@ void main() async {
       final backendService = BackendService();
       backendService.setBaseUrl(backendUrl);
       
-      // Check if backend is available
+      // Check if backend is available with longer timeout for first connection
+      debugPrint('Checking backend availability: $backendUrl');
       backendAvailable = await backendService.checkAvailability();
       
       if (backendAvailable) {
@@ -89,21 +91,43 @@ void main() async {
         paymentService.setBackendUrl(backendUrl);
       } else {
         debugPrint('⚠ Backend unavailable, using Firebase-only mode');
+        debugPrint('  Backend URL: $backendUrl');
+        debugPrint('  Health endpoint: $backendUrl/health');
+        debugPrint('  Check Railway dashboard to ensure backend service is running');
+        debugPrint('  Common issues:');
+        debugPrint('    - Backend service not deployed or crashed');
+        debugPrint('    - Database connection issues');
+        debugPrint('    - Missing environment variables (STRIPE_SECRET_KEY, DATABASE_URL)');
       }
-    } catch (e) {
-      debugPrint('⚠ Backend connection failed: $e - Using Firebase-only mode');
+    } catch (e, stackTrace) {
+      debugPrint('⚠ Backend connection failed: $e');
+      debugPrint('  Stack trace: $stackTrace');
+      debugPrint('  Using Firebase-only mode');
       backendAvailable = false;
     }
   } else {
     debugPrint('ℹ No backend URL configured - Using Firebase-only mode');
+    debugPrint('  Set BACKEND_URL in .env or environment variables');
   }
 
   // TrafficService now uses only Google Maps API - no OpenRouteService needed
 
+  // Initialize Stripe SDK early (required before using CardFormField)
   final stripePublishableKey = ApiKeys.stripePublishableKey;
-  if (stripePublishableKey.isNotEmpty) {
-    final paymentService = PaymentService();
-    paymentService.setPublishableKey(stripePublishableKey);
+  debugPrint('DEBUG: Stripe publishable key from ApiKeys: ${stripePublishableKey.isEmpty ? "EMPTY" : "${stripePublishableKey.substring(0, stripePublishableKey.length > 20 ? 20 : stripePublishableKey.length)}..."}');
+  debugPrint('DEBUG: dotenv.isInitialized: ${dotenv.isInitialized}');
+  if (dotenv.isInitialized) {
+    debugPrint('DEBUG: dotenv.env[STRIPE_PUBLISHABLE_KEY]: ${dotenv.env['STRIPE_PUBLISHABLE_KEY'] ?? "NOT SET"}');
+  }
+  if (stripePublishableKey.isNotEmpty && stripePublishableKey != 'STRIPE_PUBLISHABLE_KEY') {
+    Stripe.publishableKey = stripePublishableKey;
+    debugPrint('✓ Stripe publishable key configured');
+  } else {
+    debugPrint('⚠ Stripe publishable key not configured - Payment features will be unavailable');
+    if (stripePublishableKey == 'STRIPE_PUBLISHABLE_KEY') {
+      debugPrint('ERROR: Stripe key appears to be the placeholder string, not an actual key');
+      debugPrint('  Please check your .env file and ensure STRIPE_PUBLISHABLE_KEY is set to your actual Stripe key');
+    }
   }
   
   if (!backendAvailable) {
