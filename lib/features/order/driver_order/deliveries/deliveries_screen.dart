@@ -36,13 +36,20 @@ class _DeliveriesScreenState extends ConsumerState<DeliveriesScreen> {
     final driverRoutes = firebaseService.getDriverRoutes(driverId);
 
     final activeOrders = driverOrders.map(
-      (orders) => orders
-          .where(
-            (order) =>
-                order.status == AppConstants.orderStatusAccepted ||
-                order.status == AppConstants.orderStatusInTransit,
-          )
-          .toList(),
+      (orders) {
+        // Filter and deduplicate by order ID
+        final Map<String, OrderModel> uniqueOrders = {};
+        for (final order in orders) {
+          if ((order.status == AppConstants.orderStatusAccepted ||
+                  order.status == AppConstants.orderStatusInTransit) &&
+              (!uniqueOrders.containsKey(order.id) ||
+                  order.updatedAt.isAfter(uniqueOrders[order.id]!.updatedAt))) {
+            uniqueOrders[order.id] = order;
+          }
+        }
+        return uniqueOrders.values.toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      },
     );
 
     return Scaffold(

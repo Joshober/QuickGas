@@ -93,6 +93,45 @@ public class DriverPaymentController {
         }
     }
     
+    @PostMapping("/{paymentId}/process")
+    public ResponseEntity<?> processPendingPayment(
+            @PathVariable Long paymentId,
+            @RequestBody Map<String, Object> request) {
+        try {
+            // Extract Stripe account ID and user data from request body
+            String stripeAccountId = (String) request.get("stripeAccountId");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> userData = (Map<String, Object>) request.get("userData");
+            
+            if (stripeAccountId == null || stripeAccountId.isEmpty()) {
+                return ResponseEntity.badRequest()
+                    .body(Map.of("error", "stripeAccountId is required"));
+            }
+            
+            DriverPayment payment = driverPaymentService.retryPendingPayment(
+                    paymentId, stripeAccountId, userData);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "paymentId", payment.getId(),
+                "transferId", payment.getStripeTransferId() != null ? payment.getStripeTransferId() : "",
+                "status", payment.getStatus()
+            ));
+        } catch (IllegalArgumentException e) {
+            log.error("Payment processing error: {}", e.getMessage());
+            return ResponseEntity.status(400)
+                .body(Map.of("error", e.getMessage()));
+        } catch (StripeException e) {
+            log.error("Stripe payout error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", "Stripe payout failed: " + e.getMessage()));
+        } catch (Exception e) {
+            log.error("Payment processing error: {}", e.getMessage());
+            return ResponseEntity.status(500)
+                .body(Map.of("error", e.getMessage()));
+        }
+    }
+    
     @GetMapping("/driver/{driverId}")
     public ResponseEntity<?> getDriverPayments(@PathVariable String driverId) {
         try {

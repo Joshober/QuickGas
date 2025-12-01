@@ -174,7 +174,11 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
                     ),
                   ),
                   title: Text('Order #${order.id.substring(0, 8)}'),
-                  subtitle: Text(order.address),
+                  subtitle: Text(
+                    order.address,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
                   trailing: Icon(Icons.chevron_right, color: Colors.grey[400]),
                   onExpansionChanged: (expanded) {
                     // Optional: Load map data when expanded
@@ -218,13 +222,16 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
                                     children: [
                                       const Icon(Icons.access_time, size: 16),
                                       const SizedBox(width: 8),
-                                      Text(
-                                        order.estimatedArrivalTime != null
-                                            ? 'ETA: ${_formatTime(order.estimatedArrivalTime!)} (${order.estimatedTimeMinutes!.toStringAsFixed(0)} min)'
-                                            : 'ETA: ${order.estimatedTimeMinutes!.toStringAsFixed(0)} minutes',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodyMedium,
+                                      Expanded(
+                                        child: Text(
+                                          order.estimatedArrivalTime != null
+                                              ? 'ETA: ${_formatTime(order.estimatedArrivalTime!)} (${order.estimatedTimeMinutes!.toStringAsFixed(0)} min)'
+                                              : 'ETA: ${order.estimatedTimeMinutes!.toStringAsFixed(0)} minutes',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -236,15 +243,18 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
                                       const Icon(Icons.my_location,
                                           size: 16, color: Colors.green),
                                       const SizedBox(width: 8),
-                                      Text(
-                                        'Driver location: Live tracking',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodyMedium
-                                            ?.copyWith(
-                                              color: Colors.green,
-                                              fontWeight: FontWeight.bold,
-                                            ),
+                                      Expanded(
+                                        child: Text(
+                                          'Driver location: Live tracking',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                color: Colors.green,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -308,6 +318,8 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen>
                                   const SizedBox(height: 8),
                                   Text(
                                     'Instructions: ${order.specialInstructions}',
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 3,
                                   ),
                                 ],
                                 const SizedBox(height: 16),

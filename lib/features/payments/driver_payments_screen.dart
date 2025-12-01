@@ -18,6 +18,7 @@ class _DriverPaymentsScreenState extends ConsumerState<DriverPaymentsScreen> {
   String _selectedStatus = 'all';
   bool _isLoading = true;
   String? _errorMessage;
+  Set<int> _processingPayments = {}; // Track which payments are being processed
 
   @override
   void initState() {
@@ -25,7 +26,7 @@ class _DriverPaymentsScreenState extends ConsumerState<DriverPaymentsScreen> {
     _loadPayments();
   }
 
-  Future<void> _loadPayments() async {
+  Future<void> _loadPayments({bool retry = false}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -39,35 +40,59 @@ class _DriverPaymentsScreenState extends ConsumerState<DriverPaymentsScreen> {
         throw Exception('User not authenticated');
       }
 
-      if (backendService == null || !backendService.isAvailable) {
-        throw Exception('Backend service not available');
+      if (backendService == null) {
+        throw Exception('Backend service not initialized');
+      }
+
+      // Try to check availability if not already available
+      if (!backendService.isAvailable && !retry) {
+        await backendService.checkAvailability();
       }
 
       final paymentsData = await backendService.getDriverPayments(authState.value!.uid);
 
       if (paymentsData != null) {
-        final payments = paymentsData
-            .map((json) => DriverPaymentModel.fromJson(json))
-            .toList();
-        
-        // Sort by created date (newest first)
-        payments.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        try {
+          final payments = paymentsData
+              .map((json) {
+                try {
+                  return DriverPaymentModel.fromJson(json);
+                } catch (e) {
+                  print('Failed to parse payment: $e, data: $json');
+                  return null;
+                }
+              })
+              .where((payment) => payment != null)
+              .cast<DriverPaymentModel>()
+              .toList();
+          
+          // Sort by created date (newest first)
+          payments.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-        setState(() {
-          _allPayments = payments;
-          _applyFilter();
-          _isLoading = false;
-        });
+          setState(() {
+            _allPayments = payments;
+            _applyFilter();
+            _isLoading = false;
+          });
+        } catch (e) {
+          throw Exception('Failed to parse payment data: $e');
+        }
       } else {
+        // If null, it might be a network error - try retry once
+        if (!retry) {
+          await Future.delayed(const Duration(seconds: 1));
+          return _loadPayments(retry: true);
+        }
         setState(() {
           _allPayments = [];
           _applyFilter();
           _isLoading = false;
+          _errorMessage = 'Unable to load payments. Please check your connection and try again.';
         });
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Failed to load payments: $e';
+        _errorMessage = 'Failed to load payments: ${e.toString().replaceAll('Exception: ', '')}';
         _isLoading = false;
       });
     }
@@ -394,10 +419,135 @@ class _DriverPaymentsScreenState extends ConsumerState<DriverPaymentsScreen> {
                 ),
               ),
             ],
+            if (payment.status == 'pending') ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _processingPayments.contains(payment.id)
+                      ? null
+                      : () => _processPayment(payment),
+                  icon: _processingPayments.contains(payment.id)
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Icon(Icons.payment),
+                  label: Text(
+                    _processingPayments.contains(payment.id)
+                        ? 'Processing...'
+                        : 'Process Payment',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _processPayment(DriverPaymentModel payment) async {
+    setState(() {
+      _processingPayments.add(payment.id);
+    });
+
+    try {
+      final backendService = ref.read(backendServiceProvider);
+      final firebaseService = ref.read(firebaseServiceProvider);
+      final authState = ref.read(authStateProvider);
+      
+      if (backendService == null) {
+        throw Exception('Backend service not initialized');
+      }
+
+      if (authState.value == null) {
+        throw Exception('User not authenticated');
+      }
+
+      // Fetch user data from Firestore (to sync to PostgreSQL if needed)
+      final userProfile = await firebaseService.getUserProfile(authState.value!.uid);
+      if (userProfile == null) {
+        throw Exception('User profile not found in Firestore');
+      }
+
+      // Fetch Stripe account ID from Firestore
+      String? stripeAccountId;
+      try {
+        stripeAccountId = await firebaseService.getUserStripeAccountId(authState.value!.uid);
+        if (stripeAccountId == null || stripeAccountId.isEmpty) {
+          throw Exception('Stripe Connect account not set up. Please complete Stripe Connect onboarding first.');
+        }
+      } catch (e) {
+        throw Exception('Failed to get Stripe account: ${e.toString().replaceAll('Exception: ', '')}');
+      }
+
+      // Prepare user data to sync to PostgreSQL
+      final userData = <String, dynamic>{
+        'email': userProfile.email,
+        'name': userProfile.name,
+        'phone': userProfile.phone,
+        'role': userProfile.role,
+        'defaultRole': userProfile.defaultRole,
+        if (userProfile.fcmToken != null) 'fcmToken': userProfile.fcmToken,
+      };
+
+      await backendService.processPendingPayment(
+        payment.id,
+        stripeAccountId: stripeAccountId,
+        userData: userData,
+      );
+
+      // If we get here, payment was processed successfully
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Payment processed successfully!'),
+            backgroundColor: AppTheme.successColor,
+          ),
+        );
+        // Small delay to ensure backend has updated the payment status
+        await Future.delayed(const Duration(milliseconds: 500));
+        // Reload payments to get updated status
+        await _loadPayments();
+      }
+    } catch (e) {
+      // Always refresh payments even on error to show updated status
+      if (mounted) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        await _loadPayments();
+        
+        // Show error message
+        String errorMessage = e.toString().replaceAll('Exception: ', '');
+        // Provide helpful message for Stripe test mode issues
+        if (errorMessage.contains('insufficient funds') || errorMessage.contains('balance')) {
+          errorMessage = 'Insufficient Stripe test funds. In test mode, you need to add funds to your Stripe account using test card 4000000000000077.';
+        }
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to process payment: $errorMessage'),
+            backgroundColor: AppTheme.errorColor,
+            duration: const Duration(seconds: 5), // Longer duration for important messages
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingPayments.remove(payment.id);
+        });
+      }
+    }
   }
 
   Color _getStatusColor(String status) {

@@ -90,14 +90,21 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen>
     final driverOrders = firebaseService.getDriverOrders(authState.value!.uid);
 
     // Get active orders (accepted or in transit) for optimized routes
+    // Deduplicate by order ID to prevent duplicates
     final activeOrders = driverOrders.map(
-      (orders) => orders
-          .where(
-            (order) =>
-                order.status == AppConstants.orderStatusAccepted ||
-                order.status == AppConstants.orderStatusInTransit,
-          )
-          .toList(),
+      (orders) {
+        final Map<String, OrderModel> uniqueOrders = {};
+        for (final order in orders) {
+          if ((order.status == AppConstants.orderStatusAccepted ||
+                  order.status == AppConstants.orderStatusInTransit) &&
+              (!uniqueOrders.containsKey(order.id) ||
+                  order.updatedAt.isAfter(uniqueOrders[order.id]!.updatedAt))) {
+            uniqueOrders[order.id] = order;
+          }
+        }
+        return uniqueOrders.values.toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      },
     );
 
     return Scaffold(
@@ -148,7 +155,11 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen>
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        final orders = snapshot.data ?? [];
+        // Additional safety filter: remove any orders that have a driverId assigned
+        // This is a UI-level safety check in case the query doesn't filter properly
+        final orders = (snapshot.data ?? [])
+            .where((order) => order.driverId == null || order.driverId!.isEmpty)
+            .toList();
 
         if (orders.isEmpty) {
           return Center(
@@ -226,7 +237,11 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen>
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(order.address),
+                    Text(
+                      order.address,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
                     const SizedBox(height: 4),
                     Row(
                       children: [
@@ -248,9 +263,12 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen>
                             color: Colors.grey[600],
                           ),
                           const SizedBox(width: 4),
-                          Text(
-                            '${distance.toStringAsFixed(1)} km',
-                            style: Theme.of(context).textTheme.bodySmall,
+                          Flexible(
+                            child: Text(
+                              '${distance.toStringAsFixed(1)} km',
+                              style: Theme.of(context).textTheme.bodySmall,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ],
                       ],
@@ -268,6 +286,7 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen>
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryColor,
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
                   child: const Text('Accept'),
                 ),
@@ -424,7 +443,11 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen>
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(order.address),
+                      Text(
+                        order.address,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
                       const SizedBox(height: 4),
                       Text(
                         'Status: ${order.status.toUpperCase()}',
@@ -432,6 +455,7 @@ class _RoutesScreenState extends ConsumerState<RoutesScreen>
                           color: _getStatusColor(order.status),
                           fontWeight: FontWeight.bold,
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),

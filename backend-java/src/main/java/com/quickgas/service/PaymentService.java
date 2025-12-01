@@ -52,100 +52,127 @@ public class PaymentService {
     
     @Transactional
     public PaymentIntentResponse createPaymentIntent(PaymentIntentRequest request) throws StripeException {
-        if (stripeSecretKey == null || stripeSecretKey.isEmpty()) {
-            throw new IllegalStateException("Stripe secret key not configured");
-        }
-        
-        // Validate currency
-        String currency = request.getCurrency() != null ? request.getCurrency().toLowerCase() : "usd";
-        if (!SUPPORTED_CURRENCIES.contains(currency)) {
-            throw new ValidationException("Unsupported currency: " + currency + ". Supported currencies: " + SUPPORTED_CURRENCIES);
-        }
-        
-        // Validate amount
-        if (request.getAmount() == null || request.getAmount() <= 0) {
-            throw new ValidationException("Amount must be greater than 0");
-        }
-        
-        // Security validation: amount limits and rate limiting
-        BigDecimal amount = BigDecimal.valueOf(request.getAmount());
-        String userId = request.getMetadata() != null ? request.getMetadata().get("userId") : "unknown";
-        
         try {
-            securityService.validatePaymentAmount(amount, userId);
-            securityService.checkRateLimit(userId, "/api/payments/create-intent");
-            securityService.detectSuspiciousActivity(userId, amount, 
-                    request.getMetadata() != null ? request.getMetadata().get("orderId") : null);
-        } catch (SecurityService.SecurityException e) {
-            securityService.logSecurityEvent("PAYMENT_VALIDATION_FAILED", userId, 
-                    "amount=" + amount + ", reason=" + e.getMessage());
-            throw e;
-        }
-        
-        // Check for duplicate payment intent using idempotency key
-        if (request.getIdempotencyKey() != null && !request.getIdempotencyKey().isEmpty()) {
-            // Stripe will handle idempotency, but we can log it
-            log.info("Creating payment intent with idempotency key: {}", request.getIdempotencyKey());
-        }
-        
-        PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
-            .setAmount((long) (request.getAmount() * 100)) // Convert to cents
-            .setCurrency(currency)
-            .setAutomaticPaymentMethods(
-                PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
-                    .setEnabled(true)
-                    .build()
-            );
-        
-        if (request.getMetadata() != null && !request.getMetadata().isEmpty()) {
-            paramsBuilder.putAllMetadata(request.getMetadata());
-        }
-        
-        PaymentIntentCreateParams params = paramsBuilder.build();
-        RequestOptions requestOptions = null;
-        
-        // Add idempotency key if provided (via RequestOptions)
-        if (request.getIdempotencyKey() != null && !request.getIdempotencyKey().isEmpty()) {
-            requestOptions = RequestOptions.builder()
-                .setIdempotencyKey(request.getIdempotencyKey())
-                .build();
-        }
-        
-        PaymentIntent paymentIntent;
-        if (requestOptions != null) {
-            paymentIntent = PaymentIntent.create(params, requestOptions);
-        } else {
-            paymentIntent = PaymentIntent.create(params);
-        }
-        
-        // Extract order ID from metadata
-        String orderId = request.getMetadata() != null ? request.getMetadata().get("orderId") : null;
-        
-        // Save payment transaction to database
-        if (orderId != null) {
-            try {
-                PaymentTransaction transaction = PaymentTransaction.builder()
-                    .orderId(orderId)
-                    .stripePaymentIntentId(paymentIntent.getId())
-                    .amount(BigDecimal.valueOf(request.getAmount()))
-                    .currency(currency)
-                    .status(paymentIntent.getStatus())
-                    .build();
-                
-                paymentTransactionRepository.save(transaction);
-                log.info("Payment transaction saved: orderId={}, paymentIntentId={}, amount={}, status={}", 
-                    orderId, paymentIntent.getId(), request.getAmount(), paymentIntent.getStatus());
-            } catch (Exception e) {
-                log.error("Failed to save payment transaction: orderId={}, paymentIntentId={}", 
-                    orderId, paymentIntent.getId(), e);
-                // Don't fail the payment intent creation if transaction save fails
+            if (stripeSecretKey == null || stripeSecretKey.isEmpty()) {
+                log.error("Stripe secret key not configured");
+                throw new IllegalStateException("Stripe secret key not configured");
             }
+            
+            // Validate currency - handle null and convert to lowercase
+            String currency = "usd"; // default
+            if (request.getCurrency() != null && !request.getCurrency().isEmpty()) {
+                currency = request.getCurrency().toLowerCase();
+            }
+            
+            if (!SUPPORTED_CURRENCIES.contains(currency)) {
+                log.warn("Unsupported currency: {}", currency);
+                throw new ValidationException("Unsupported currency: " + currency + ". Supported currencies: " + SUPPORTED_CURRENCIES);
+            }
+            
+            // Validate amount
+            if (request.getAmount() == null || request.getAmount() <= 0) {
+                log.warn("Invalid amount: {}", request.getAmount());
+                throw new ValidationException("Amount must be greater than 0");
+            }
+            
+            // Security validation: amount limits and rate limiting
+            BigDecimal amount = BigDecimal.valueOf(request.getAmount());
+            String userId = "unknown";
+            String orderId = null;
+            
+            if (request.getMetadata() != null) {
+                userId = request.getMetadata().get("userId");
+                if (userId == null || userId.isEmpty()) {
+                    userId = "unknown";
+                }
+                orderId = request.getMetadata().get("orderId");
+            }
+            
+            try {
+                securityService.validatePaymentAmount(amount, userId);
+                securityService.checkRateLimit(userId, "/api/payments/create-intent");
+                securityService.detectSuspiciousActivity(userId, amount, orderId);
+            } catch (SecurityService.SecurityException e) {
+                securityService.logSecurityEvent("PAYMENT_VALIDATION_FAILED", userId, 
+                        "amount=" + amount + ", reason=" + e.getMessage());
+                throw e;
+            }
+            
+            // Check for duplicate payment intent using idempotency key
+            if (request.getIdempotencyKey() != null && !request.getIdempotencyKey().isEmpty()) {
+                // Stripe will handle idempotency, but we can log it
+                log.info("Creating payment intent with idempotency key: {}", request.getIdempotencyKey());
+            }
+            
+            PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
+                .setAmount((long) (request.getAmount() * 100)) // Convert to cents
+                .setCurrency(currency)
+                .setAutomaticPaymentMethods(
+                    PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
+                        .setEnabled(true)
+                        .build()
+                );
+            
+            if (request.getMetadata() != null && !request.getMetadata().isEmpty()) {
+                paramsBuilder.putAllMetadata(request.getMetadata());
+            }
+            
+            PaymentIntentCreateParams params = paramsBuilder.build();
+            RequestOptions requestOptions = null;
+            
+            // Add idempotency key if provided (via RequestOptions)
+            if (request.getIdempotencyKey() != null && !request.getIdempotencyKey().isEmpty()) {
+                requestOptions = RequestOptions.builder()
+                    .setIdempotencyKey(request.getIdempotencyKey())
+                    .build();
+            }
+            
+            PaymentIntent paymentIntent;
+            if (requestOptions != null) {
+                paymentIntent = PaymentIntent.create(params, requestOptions);
+            } else {
+                paymentIntent = PaymentIntent.create(params);
+            }
+            
+            log.info("Stripe payment intent created: paymentIntentId={}, status={}, amount={}, currency={}", 
+                paymentIntent.getId(), paymentIntent.getStatus(), request.getAmount(), currency);
+            
+            // Save payment transaction to database
+            if (orderId != null && !orderId.isEmpty()) {
+                try {
+                    PaymentTransaction transaction = PaymentTransaction.builder()
+                        .orderId(orderId)
+                        .stripePaymentIntentId(paymentIntent.getId())
+                        .amount(BigDecimal.valueOf(request.getAmount()))
+                        .currency(currency)
+                        .status(paymentIntent.getStatus())
+                        .build();
+                    
+                    paymentTransactionRepository.save(transaction);
+                    log.info("Payment transaction saved: orderId={}, paymentIntentId={}, amount={}, status={}", 
+                        orderId, paymentIntent.getId(), request.getAmount(), paymentIntent.getStatus());
+                } catch (Exception e) {
+                    log.error("Failed to save payment transaction: orderId={}, paymentIntentId={}", 
+                        orderId, paymentIntent.getId(), e);
+                    // Don't fail the payment intent creation if transaction save fails
+                }
+            }
+            
+            return new PaymentIntentResponse(
+                paymentIntent.getClientSecret(),
+                paymentIntent.getId()
+            );
+        } catch (ValidationException | SecurityService.SecurityException | IllegalStateException e) {
+            // Re-throw known exceptions
+            throw e;
+        } catch (StripeException e) {
+            log.error("Stripe API error: code={}, message={}", 
+                e.getCode(), e.getMessage(), e);
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error creating payment intent: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to create payment intent: " + e.getMessage(), e);
         }
-        
-        return new PaymentIntentResponse(
-            paymentIntent.getClientSecret(),
-            paymentIntent.getId()
-        );
     }
     
     @Transactional

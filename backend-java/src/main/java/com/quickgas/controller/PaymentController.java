@@ -29,23 +29,28 @@ public class PaymentController {
             @Valid @RequestBody PaymentIntentRequest request,
             HttpServletRequest httpRequest) throws StripeException {
         
-        String userId = request.getMetadata() != null ? request.getMetadata().get("userId") : "unknown";
-        String orderId = request.getMetadata() != null ? request.getMetadata().get("orderId") : null;
-        String clientIp = httpRequest.getRemoteAddr();
-        
-        // Log security event
-        securityService.logSecurityEvent("PAYMENT_INTENT_CREATE", userId, 
-                "amount=" + request.getAmount() + ", orderId=" + orderId + ", ip=" + clientIp);
-        
-        log.info("Creating payment intent: amount={}, currency={}, orderId={}, userId={}, idempotencyKey={}", 
-            request.getAmount(), request.getCurrency(), orderId, userId, request.getIdempotencyKey());
-        
-        PaymentIntentResponse response = paymentService.createPaymentIntent(request);
-        
-        log.info("Payment intent created: paymentIntentId={}, orderId={}", 
-            response.getPaymentIntentId(), orderId);
-        
-        return ResponseEntity.ok(response);
+        try {
+            String userId = request.getMetadata() != null ? request.getMetadata().get("userId") : "unknown";
+            String orderId = request.getMetadata() != null ? request.getMetadata().get("orderId") : null;
+            String clientIp = httpRequest.getRemoteAddr();
+            
+            // Log security event
+            securityService.logSecurityEvent("PAYMENT_INTENT_CREATE", userId, 
+                    "amount=" + request.getAmount() + ", orderId=" + orderId + ", ip=" + clientIp);
+            
+            log.info("Creating payment intent: amount={}, currency={}, orderId={}, userId={}, idempotencyKey={}", 
+                request.getAmount(), request.getCurrency(), orderId, userId, request.getIdempotencyKey());
+            
+            PaymentIntentResponse response = paymentService.createPaymentIntent(request);
+            
+            log.info("Payment intent created: paymentIntentId={}, orderId={}", 
+                response.getPaymentIntentId(), orderId);
+            
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Error creating payment intent: {}", e.getMessage(), e);
+            throw e; // Re-throw to let GlobalExceptionHandler handle it
+        }
     }
     
     @PostMapping("/confirm")

@@ -102,8 +102,11 @@ class _DeliveryDetailScreenState extends ConsumerState<DeliveryDetailScreen> {
         photoUrl: photoUrl,
       );
 
+      // Get updated order to return
+      final updatedOrder = await firebaseService.getOrderById(widget.order.id);
+
       if (mounted) {
-        Navigator.of(context).pop();
+        Navigator.of(context).pop(updatedOrder);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Delivery completed successfully!'),
@@ -191,6 +194,9 @@ class _DeliveryDetailScreenState extends ConsumerState<DeliveryDetailScreen> {
 
   Future<void> _startLocationTracking() async {
     try {
+      // Stop any existing tracking first to prevent multiple instances
+      await _stopLocationTracking();
+      
       final firebaseService = ref.read(firebaseServiceProvider);
       _locationTrackingService = LocationTrackingService(firebaseService);
       await _locationTrackingService!.startTracking(
@@ -209,9 +215,11 @@ class _DeliveryDetailScreenState extends ConsumerState<DeliveryDetailScreen> {
     }
   }
 
-  void _stopLocationTracking() {
-    _locationTrackingService?.stopTracking();
-    _locationTrackingService = null;
+  Future<void> _stopLocationTracking() async {
+    if (_locationTrackingService != null) {
+      await _locationTrackingService!.stopTracking();
+      _locationTrackingService = null;
+    }
   }
 
   String _formatTime(DateTime dateTime) {
@@ -223,7 +231,12 @@ class _DeliveryDetailScreenState extends ConsumerState<DeliveryDetailScreen> {
 
   @override
   void dispose() {
-    _stopLocationTracking();
+    // Note: dispose() is synchronous, but we need to stop tracking
+    // We'll handle this asynchronously but ensure cleanup happens
+    _locationTrackingService?.stopTracking().catchError((e) {
+      print('Error stopping location tracking in dispose: $e');
+    });
+    _locationTrackingService = null;
     super.dispose();
   }
 

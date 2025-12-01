@@ -64,9 +64,9 @@ void main() async {
 
   await Firebase.initializeApp();
 
+  // Initialize notification service (channels are created inside initialize)
   final notificationService = NotificationService();
   await notificationService.initialize();
-  await notificationService.createNotificationChannels();
 
   // Try to connect to backend, but don't fail if unavailable
   String? backendUrl = ApiKeys.backendUrl.isNotEmpty

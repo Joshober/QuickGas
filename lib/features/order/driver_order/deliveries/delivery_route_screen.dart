@@ -25,23 +25,60 @@ class _DeliveryRouteScreenState extends ConsumerState<DeliveryRouteScreen> {
   OptimizedRoute? _optimizedRoute;
   bool _isOptimizing = false;
   RoutePoint? _currentLocation;
+  List<OrderModel> _activeOrders = [];
 
   @override
   void initState() {
     super.initState();
+    _activeOrders = widget.orders;
     _getCurrentLocation();
     _initializeWaypoints();
   }
 
-  void _initializeWaypoints() {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh orders when screen becomes visible again
+    _refreshOrders();
+  }
+
+  Future<void> _refreshOrders() async {
+    try {
+      final firebaseService = ref.read(firebaseServiceProvider);
+      final refreshedOrders = <OrderModel>[];
+      
+      for (final order in widget.orders) {
+        final updatedOrder = await firebaseService.getOrderById(order.id);
+        if (updatedOrder != null && 
+            updatedOrder.status != AppConstants.orderStatusCompleted) {
+          refreshedOrders.add(updatedOrder);
+        }
+      }
+
+      if (mounted && refreshedOrders.length != _activeOrders.length) {
+        setState(() {
+          _activeOrders = refreshedOrders;
+          _updateWaypoints();
+        });
+      }
+    } catch (e) {
+      print('Failed to refresh orders: $e');
+    }
+  }
+
+  void _updateWaypoints() {
     setState(() {
-      _waypoints = widget.orders
+      _waypoints = _activeOrders
           .map(
             (order) =>
                 RoutePoint(order.location.latitude, order.location.longitude),
           )
           .toList();
     });
+  }
+
+  void _initializeWaypoints() {
+    _updateWaypoints();
   }
 
   Future<void> _getCurrentLocation() async {
@@ -63,7 +100,7 @@ class _DeliveryRouteScreenState extends ConsumerState<DeliveryRouteScreen> {
   }
 
   Future<void> _optimizeRoute() async {
-    if (widget.orders.length < 2) {
+    if (_activeOrders.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Need at least 2 deliveries to optimize')),
       );
@@ -79,11 +116,11 @@ class _DeliveryRouteScreenState extends ConsumerState<DeliveryRouteScreen> {
       final startPoint =
           _currentLocation ??
           RoutePoint(
-            widget.orders[0].location.latitude,
-            widget.orders[0].location.longitude,
+            _activeOrders[0].location.latitude,
+            _activeOrders[0].location.longitude,
           );
 
-      final stops = widget.orders
+      final stops = _activeOrders
           .map(
             (order) =>
                 RoutePoint(order.location.latitude, order.location.longitude),
@@ -189,7 +226,7 @@ class _DeliveryRouteScreenState extends ConsumerState<DeliveryRouteScreen> {
       appBar: AppBar(
         title: const Text('Delivery Route'),
         actions: [
-          if (widget.orders.length >= 2)
+          if (_activeOrders.length >= 2)
             IconButton(
               icon: _isOptimizing
                   ? const SizedBox(
@@ -312,7 +349,7 @@ class _DeliveryRouteScreenState extends ConsumerState<DeliveryRouteScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Delivery Addresses (${widget.orders.length})',
+                        'Delivery Addresses (${_activeOrders.length})',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
@@ -327,10 +364,29 @@ class _DeliveryRouteScreenState extends ConsumerState<DeliveryRouteScreen> {
                   ),
                   const SizedBox(height: 8),
                   Expanded(
-                    child: ListView.builder(
-                      itemCount: widget.orders.length,
-                      itemBuilder: (context, index) {
-                        final order = widget.orders[index];
+                    child: _activeOrders.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.check_circle_outline,
+                                  size: 64,
+                                  color: Colors.grey[400],
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'All deliveries completed!',
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _activeOrders.length,
+                            itemBuilder: (context, index) {
+                              final order = _activeOrders[index];
                         // Find the optimized position if route is optimized
                         int optimizedIndex = index;
                         if (_optimizedRoute != null) {
@@ -416,13 +472,18 @@ class _DeliveryRouteScreenState extends ConsumerState<DeliveryRouteScreen> {
                               ],
                             ),
                             trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
+                            onTap: () async {
+                              await Navigator.of(context).push<OrderModel>(
                                 MaterialPageRoute(
                                   builder: (context) =>
                                       DeliveryDetailScreen(order: order),
                                 ),
                               );
+                              
+                              // Refresh orders when returning from delivery detail
+                              if (mounted) {
+                                await _refreshOrders();
+                              }
                             },
                           ),
                         );

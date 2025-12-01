@@ -1,14 +1,32 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../shared/models/user_model.dart';
 import '../shared/models/order_model.dart';
 import '../shared/models/route_model.dart';
 import '../core/constants/app_constants.dart';
 import 'backend_service.dart';
 
+/// Exception thrown when account linking is required
+class AccountLinkingRequiredException implements Exception {
+  final String email;
+  final AuthCredential credential;
+
+  AccountLinkingRequiredException({
+    required this.email,
+    required this.credential,
+  });
+
+  @override
+  String toString() {
+    return 'Account linking required for email: $email';
+  }
+}
+
 class FirebaseService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
 
   User? get currentUser => _auth.currentUser;
 
@@ -51,7 +69,91 @@ class FirebaseService {
     );
   }
 
+  Future<UserCredential> signInWithGoogle() async {
+    // Trigger the authentication flow
+    final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
+    if (googleUser == null) {
+      // User canceled the sign-in
+      throw Exception('Google sign-in was canceled');
+    }
+
+    // Obtain the auth details from the request
+    final GoogleSignInAuthentication googleAuth =
+        await googleUser.authentication;
+
+    // Create a new credential
+    final credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
+
+    try {
+      // Sign in to Firebase with the Google credential
+      final userCredential = await _auth.signInWithCredential(credential);
+
+      // Check if this is a new user and create profile if needed
+      if (userCredential.user != null) {
+        final userId = userCredential.user!.uid;
+        final existingProfile = await getUserProfile(userId);
+
+        if (existingProfile == null) {
+          // New user - create profile with Google account info
+          final displayName = userCredential.user!.displayName ?? 'User';
+          final email = userCredential.user!.email ?? '';
+          final phone = userCredential.user!.phoneNumber ?? '';
+
+          await createUserProfile(
+            userId: userId,
+            email: email,
+            name: displayName,
+            phone: phone,
+            role: AppConstants.roleCustomer,
+            defaultRole: AppConstants.roleCustomer,
+          );
+        }
+      }
+
+      return userCredential;
+    } on FirebaseAuthException catch (e) {
+      // Handle account exists with different credential
+      if (e.code == 'account-exists-with-different-credential') {
+        // Extract the email from the error
+        final email = e.email;
+        if (email != null) {
+          // Throw a custom exception with the email and credential for linking
+          throw AccountLinkingRequiredException(
+            email: email,
+            credential: credential,
+          );
+        }
+      }
+      // Re-throw other Firebase auth exceptions
+      rethrow;
+    }
+  }
+
+  /// Link a Google account to an existing email/password account
+  Future<UserCredential> linkGoogleAccount({
+    required String email,
+    required String password,
+    required AuthCredential googleCredential,
+  }) async {
+    // First, sign in with email/password
+    final emailCredential = await _auth.signInWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+
+    // Then link the Google credential to the existing account
+    await emailCredential.user!.linkWithCredential(googleCredential);
+
+    // Return the updated user credential
+    return emailCredential;
+  }
+
   Future<void> signOut() async {
+    await _googleSignIn.signOut();
     await _auth.signOut();
   }
 
@@ -270,9 +372,14 @@ class FirebaseService {
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => OrderModel.fromFirestore(doc))
-              .toList(),
+          (snapshot) {
+            // Filter out orders that already have a driverId assigned
+            // This ensures drivers can't see orders that are already active/assigned
+            return snapshot.docs
+                .map((doc) => OrderModel.fromFirestore(doc))
+                .where((order) => order.driverId == null || order.driverId!.isEmpty)
+                .toList();
+          },
         );
   }
 
@@ -283,9 +390,20 @@ class FirebaseService {
         .orderBy('updatedAt', descending: true)
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => OrderModel.fromFirestore(doc))
-              .toList(),
+          (snapshot) {
+            // Deduplicate orders by ID to prevent duplicates
+            final Map<String, OrderModel> uniqueOrders = {};
+            for (final doc in snapshot.docs) {
+              final order = OrderModel.fromFirestore(doc);
+              // Use the most recent order if duplicate IDs exist
+              if (!uniqueOrders.containsKey(order.id) ||
+                  order.updatedAt.isAfter(uniqueOrders[order.id]!.updatedAt)) {
+                uniqueOrders[order.id] = order;
+              }
+            }
+            return uniqueOrders.values.toList()
+              ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          },
         );
   }
 
@@ -404,14 +522,39 @@ class FirebaseService {
     String driverId, {
     BackendService? backendService,
   }) async {
-    await _firestore
-        .collection(AppConstants.ordersCollection)
-        .doc(orderId)
-        .update({
-          'driverId': driverId,
-          'status': AppConstants.orderStatusAccepted,
-          'updatedAt': Timestamp.fromDate(DateTime.now()),
-        });
+    // Use a transaction to atomically check and accept the order
+    // This prevents race conditions where multiple drivers try to accept the same order
+    await _firestore.runTransaction((transaction) async {
+      final orderRef = _firestore
+          .collection(AppConstants.ordersCollection)
+          .doc(orderId);
+      
+      final orderDoc = await transaction.get(orderRef);
+      
+      if (!orderDoc.exists) {
+        throw Exception('Order not found');
+      }
+      
+      final orderData = orderDoc.data()!;
+      final currentStatus = orderData['status'] as String?;
+      final currentDriverId = orderData['driverId'] as String?;
+      
+      // Check if order is still pending and not assigned to another driver
+      if (currentStatus != AppConstants.orderStatusPending) {
+        throw Exception('Order is no longer available. Status: $currentStatus');
+      }
+      
+      if (currentDriverId != null && currentDriverId.isNotEmpty) {
+        throw Exception('Order has already been assigned to another driver');
+      }
+      
+      // Atomically update the order
+      transaction.update(orderRef, {
+        'driverId': driverId,
+        'status': AppConstants.orderStatusAccepted,
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
+    });
 
     // Notify customer that order was accepted
     if (backendService != null) {
@@ -468,19 +611,37 @@ class FirebaseService {
       if (driverId != null && driverId.isNotEmpty) {
         // Calculate order total (gas quantity * price per gallon + delivery fee)
         final orderTotal = (gasQuantity * AppConstants.pricePerGallon) + AppConstants.deliveryFee;
+        final driverAmount = orderTotal * 0.8;
+        
+        print('Attempting to create driver payment: driverId=$driverId, orderId=$orderId, orderTotal=$orderTotal, driverAmount=$driverAmount');
+        
+        // Try to check availability if not already available
+        if (!backendService.isAvailable) {
+          print('Backend not marked as available, attempting to check availability...');
+          await backendService.checkAvailability();
+        }
         
         try {
-          await backendService.createDriverPayment(
+          final success = await backendService.createDriverPayment(
             driverId: driverId,
             orderId: orderId,
             orderTotal: orderTotal,
             currency: 'usd',
           );
-          print('Driver payment created: driverId=$driverId, orderId=$orderId, amount=${orderTotal * 0.8}');
-        } catch (e) {
-          print('Failed to create driver payment: $e');
+          
+          if (success) {
+            print('SUCCESS: Driver payment created successfully - driverId=$driverId, orderId=$orderId, amount=$driverAmount');
+          } else {
+            print('WARNING: Driver payment creation returned false - driverId=$driverId, orderId=$orderId');
+            // Don't fail delivery completion if payment creation fails, but log it
+          }
+        } catch (e, stackTrace) {
+          print('ERROR: Exception creating driver payment: $e');
+          print('Stack trace: $stackTrace');
           // Don't fail delivery completion if payment creation fails
         }
+      } else {
+        print('WARNING: Cannot create driver payment - driverId is null or empty for orderId=$orderId');
       }
     }
   }

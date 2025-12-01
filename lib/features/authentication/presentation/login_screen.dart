@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/providers/auth_provider.dart';
+import '../../../../services/firebase_service.dart';
 import '../widgets/auth_text_field.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -63,6 +65,160 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Login failed: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleGoogleSignIn() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final firebaseService = ref.read(firebaseServiceProvider);
+      await firebaseService.signInWithGoogle();
+
+      if (mounted) {
+        context.go('/home');
+      }
+    } on AccountLinkingRequiredException catch (e) {
+      // Account exists with different credential - prompt for password to link
+      if (mounted) {
+        setState(() => _isLoading = false);
+        await _showAccountLinkingDialog(e.email, e.credential);
+      }
+    } catch (e) {
+      if (mounted) {
+        String errorMessage = 'Google sign-in failed';
+        if (e.toString().contains('canceled')) {
+          errorMessage = 'Sign-in was canceled';
+        } else {
+          errorMessage = 'Google sign-in failed: ${e.toString()}';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _showAccountLinkingDialog(
+    String email,
+    AuthCredential googleCredential,
+  ) async {
+    final passwordController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Link Accounts'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'An account with email $email already exists. Enter your password to link your Google account.',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: passwordController,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock_outlined),
+                ),
+                obscureText: true,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter your password';
+                  }
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.of(context).pop(true);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Link Accounts'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true && passwordController.text.isNotEmpty) {
+      await _linkGoogleAccount(email, passwordController.text, googleCredential);
+    }
+    passwordController.dispose();
+  }
+
+  Future<void> _linkGoogleAccount(
+    String email,
+    String password,
+    AuthCredential googleCredential,
+  ) async {
+    setState(() => _isLoading = true);
+
+    try {
+      final firebaseService = ref.read(firebaseServiceProvider);
+      await firebaseService.linkGoogleAccount(
+        email: email,
+        password: password,
+        googleCredential: googleCredential,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Accounts linked successfully!'),
+            backgroundColor: AppTheme.successColor,
+          ),
+        );
+        context.go('/home');
+      }
+    } catch (e) {
+      if (mounted) {
+        String errorMessage = 'Failed to link accounts';
+        if (e.toString().contains('wrong-password')) {
+          errorMessage = 'Incorrect password. Please try again.';
+        } else if (e.toString().contains('user-not-found')) {
+          errorMessage = 'Account not found. Please sign up first.';
+        } else {
+          errorMessage = 'Failed to link accounts: ${e.toString()}';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -189,6 +345,50 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                               fontWeight: FontWeight.bold,
                             ),
                           ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Divider with "OR"
+                  Row(
+                    children: [
+                      Expanded(child: Divider(color: Colors.grey[300])),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'OR',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      Expanded(child: Divider(color: Colors.grey[300])),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Google Sign-In Button
+                  OutlinedButton.icon(
+                    onPressed: _isLoading ? null : _handleGoogleSignIn,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      side: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    icon: Image.asset(
+                      'assets/images/google_logo.png',
+                      height: 20,
+                      width: 20,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(Icons.g_mobiledata, size: 24);
+                      },
+                    ),
+                    label: const Text(
+                      'Continue with Google',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 24),
 

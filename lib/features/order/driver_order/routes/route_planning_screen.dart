@@ -8,8 +8,8 @@ import '../../../../core/providers/auth_provider.dart';
 import '../../../../core/animations/page_transitions.dart';
 import '../../../../services/traffic_service.dart';
 import '../../../../shared/models/order_model.dart';
-import '../../../../shared/models/route_model.dart';
 import '../../../map/map_widget.dart';
+import '../deliveries/delivery_detail_screen.dart';
 import 'add_order_to_route_screen.dart';
 
 class RoutePlanningScreen extends ConsumerStatefulWidget {
@@ -29,17 +29,19 @@ class RoutePlanningScreen extends ConsumerStatefulWidget {
       _RoutePlanningScreenState();
 }
 
-class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
+class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> with WidgetsBindingObserver {
   final List<OrderModel> _selectedOrders = [];
   List<RoutePoint> _waypoints = [];
   OptimizedRoute? _optimizedRoute;
   bool _isOptimizing = false;
   bool _isLoading = false;
   String? _currentRouteId;
+  DateTime? _lastRefreshTime;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.routeId != null) {
       _loadRoute(widget.routeId!);
     } else if (widget.initialOrder != null) {
@@ -48,6 +50,74 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
         _selectedOrders.addAll(widget.additionalOrders!);
       }
       _updateWaypoints();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Refresh route when app comes back to foreground
+    if (state == AppLifecycleState.resumed) {
+      _refreshRoute();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh when screen becomes visible again (e.g., returning from another screen)
+    // But only if it's been more than 1 second since last refresh to avoid excessive calls
+    final now = DateTime.now();
+    if (_lastRefreshTime == null || 
+        now.difference(_lastRefreshTime!).inSeconds > 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && (_currentRouteId != null || _selectedOrders.isNotEmpty)) {
+          _refreshRoute();
+        }
+      });
+    }
+  }
+
+  Future<void> _refreshRoute() async {
+    _lastRefreshTime = DateTime.now();
+    if (_currentRouteId != null) {
+      await _loadRoute(_currentRouteId!);
+    } else if (_selectedOrders.isNotEmpty) {
+      // Refresh orders if we have selected orders
+      await _refreshOrders();
+    }
+  }
+
+  Future<void> _refreshOrders() async {
+    try {
+      final firebaseService = ref.read(firebaseServiceProvider);
+      final refreshedOrders = <OrderModel>[];
+      
+      for (final order in _selectedOrders) {
+        final updatedOrder = await firebaseService.getOrderById(order.id);
+        if (updatedOrder != null) {
+          refreshedOrders.add(updatedOrder);
+        } else {
+          // Order might have been deleted, keep the old one
+          refreshedOrders.add(order);
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _selectedOrders.clear();
+          _selectedOrders.addAll(refreshedOrders);
+          _updateWaypoints();
+        });
+      }
+    } catch (e) {
+      print('Failed to refresh orders: $e');
     }
   }
 
@@ -360,12 +430,35 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
         throw Exception('Driver not authenticated');
       }
 
+      // Accept orders one by one, stopping if any fail
+      final List<String> acceptedOrderIds = [];
+      final List<String> failedOrderIds = [];
+      
       for (final order in _selectedOrders) {
-        await firebaseService.acceptOrder(
-          order.id,
-          authState.value!.uid,
-          backendService: backendService,
-        );
+        try {
+          // Double-check order is still available before accepting
+          if (order.driverId != null && order.driverId!.isNotEmpty) {
+            failedOrderIds.add(order.id);
+            continue;
+          }
+          
+          await firebaseService.acceptOrder(
+            order.id,
+            authState.value!.uid,
+            backendService: backendService,
+          );
+          acceptedOrderIds.add(order.id);
+        } catch (e) {
+          failedOrderIds.add(order.id);
+          print('Failed to accept order ${order.id}: $e');
+        }
+      }
+      
+      if (failedOrderIds.isNotEmpty) {
+        final message = acceptedOrderIds.isEmpty
+            ? 'Failed to accept orders. Some may have been taken by other drivers.'
+            : 'Accepted ${acceptedOrderIds.length} order(s). ${failedOrderIds.length} order(s) were unavailable.';
+        throw Exception(message);
       }
 
       if (mounted) {
@@ -524,26 +617,68 @@ class _RoutePlanningScreenState extends ConsumerState<RoutePlanningScreen> {
                               ),
                             ),
                             title: Text('Order #${order.id.substring(0, 8)}'),
-                            subtitle: Text(order.address),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.remove_circle),
-                              onPressed: () {
-                                setState(() {
-                                  _selectedOrders.removeAt(index);
-                                  // Update waypoints after removing order
-                                  _waypoints = _selectedOrders
-                                      .map(
-                                        (order) => RoutePoint(
-                                          order.location.latitude,
-                                          order.location.longitude,
-                                        ),
-                                      )
-                                      .toList();
-                                  if (_optimizedRoute != null) {
-                                    _optimizedRoute = null;
-                                  }
-                                });
-                              },
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(order.address),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Status: ${order.status.toUpperCase()}',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: order.status == AppConstants.orderStatusCompleted
+                                        ? AppTheme.successColor
+                                        : order.status == AppConstants.orderStatusInTransit
+                                            ? AppTheme.secondaryColor
+                                            : Colors.grey,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            onTap: () async {
+                              // Navigate to order detail screen
+                              await Navigator.of(context).push<OrderModel>(
+                                PageTransitions.slideTransition<OrderModel>(
+                                  DeliveryDetailScreen(order: order),
+                                ),
+                              );
+                              
+                              // Always refresh route when returning from detail screen
+                              // This ensures completed deliveries are reflected immediately
+                              if (mounted) {
+                                await _refreshRoute();
+                              }
+                            },
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (order.status == AppConstants.orderStatusCompleted)
+                                  const Icon(
+                                    Icons.check_circle,
+                                    color: AppTheme.successColor,
+                                    size: 20,
+                                  ),
+                                IconButton(
+                                  icon: const Icon(Icons.remove_circle),
+                                  onPressed: () {
+                                    setState(() {
+                                      _selectedOrders.removeAt(index);
+                                      // Update waypoints after removing order
+                                      _waypoints = _selectedOrders
+                                          .map(
+                                            (order) => RoutePoint(
+                                              order.location.latitude,
+                                              order.location.longitude,
+                                            ),
+                                          )
+                                          .toList();
+                                      if (_optimizedRoute != null) {
+                                        _optimizedRoute = null;
+                                      }
+                                    });
+                                  },
+                                ),
+                              ],
                             ),
                           ),
                         );

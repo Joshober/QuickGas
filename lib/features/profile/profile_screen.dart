@@ -6,7 +6,6 @@ import '../../core/providers/auth_provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/animations/page_transitions.dart';
 import 'edit_profile_screen.dart';
-import 'payment_methods_screen.dart';
 import 'settings_screen.dart';
 import '../payments/driver_payments_screen.dart';
 import 'stripe_connect_screen.dart';
@@ -137,19 +136,6 @@ class ProfileScreen extends ConsumerWidget {
                       ),
                       const Divider(),
                       ListTile(
-                        leading: const Icon(Icons.payment),
-                        title: const Text('Payment Methods'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          Navigator.of(context).push(
-                            PageTransitions.slideTransition(
-                              const PaymentMethodsScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(),
-                      ListTile(
                         leading: const Icon(Icons.settings),
                         title: const Text('Settings'),
                         trailing: const Icon(Icons.chevron_right),
@@ -165,8 +151,8 @@ class ProfileScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
-                // Driver-specific options
-                if (profile.role == AppConstants.roleDriver || profile.role == AppConstants.roleBoth) ...[
+                // Driver-specific options - only show when in driver mode
+                if (profile.defaultRole == AppConstants.roleDriver) ...[
                   Text(
                     'Driver',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(

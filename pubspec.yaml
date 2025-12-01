@@ -77,6 +77,9 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   url_launcher: ^6.3.1
   
+  # Google Sign-In
+  google_sign_in: ^6.2.1
+  
   # Environment Variables
   flutter_dotenv: ^5.1.0
 

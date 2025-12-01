@@ -49,7 +49,10 @@ class _CreateRouteScreenState extends ConsumerState<CreateRouteScreen> {
     pendingOrdersStream.listen((orders) {
       if (mounted) {
         setState(() {
-          _availableOrders = orders;
+          // Filter out orders that already have a driverId assigned (safety check)
+          _availableOrders = orders
+              .where((order) => order.driverId == null || order.driverId!.isEmpty)
+              .toList();
           _isLoading = false;
         });
       }

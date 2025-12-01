@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.quickgas"
+    namespace = "com.example.chatappfinal"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 

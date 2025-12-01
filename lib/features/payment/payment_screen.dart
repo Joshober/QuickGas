@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_stripe/flutter_stripe.dart' hide Card;
 import '../../core/theme/app_theme.dart';
 import '../../core/constants/api_keys.dart';
+import '../../core/providers/auth_provider.dart';
 import '../../services/payment_service.dart';
 import '../../services/payment_error.dart';
 
@@ -81,15 +82,19 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       // Don't block on backend availability check - just try to create payment intent
       // If backend is down, the payment intent creation will fail with a clear error
 
+      // Get current user ID for security tracking
+      final authState = ref.read(authStateProvider);
+      final userId = authState.value?.uid ?? 'unknown';
+
       // Generate idempotency key from order ID
       final idempotencyKey =
           'order_${widget.orderId}_${DateTime.now().millisecondsSinceEpoch}';
 
-      // Create payment intent
+      // Create payment intent with userId in metadata for security tracking
       final clientSecret = await paymentService.createPaymentIntent(
         amount: widget.amount,
         currency: widget.currency,
-        metadata: {'orderId': widget.orderId},
+        metadata: {'orderId': widget.orderId, 'userId': userId},
         idempotencyKey: idempotencyKey,
       );
 

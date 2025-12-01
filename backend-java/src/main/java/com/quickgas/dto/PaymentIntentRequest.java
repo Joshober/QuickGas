@@ -14,7 +14,7 @@ public class PaymentIntentRequest {
     private Double amount;
     
     @Pattern(regexp = "^[a-z]{3}$", message = "Currency must be a valid 3-letter ISO 4217 code")
-    private String currency = "usd";
+    private String currency;
     
     private Map<String, String> metadata;
     
